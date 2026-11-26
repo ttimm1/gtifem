@@ -1,0 +1,64 @@
+name: Обновление расписания
+
+on:
+  schedule:
+    # 06:30 МСК — каждый день, до начала пар
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Пересобрать каталог групп"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/requirements.txt
+
+      - name: Зависимости
+        run: pip install -r tools/requirements.txt
+
+      - name: Собрать расписание
+        env:
+          GTIFEM_IFACE: ""
+        run: python tools/scrape.py --no-cache
+
+      - name: Проверить данные
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          cat = json.loads(pathlib.Path("docs/data/catalog.json").read_text(encoding="utf-8"))
+          groups = cat.get("groups", [])
+          lessons = sum(g.get("lessons", 0) for g in groups)
+          print(f"групп: {len(groups)}, пар: {lessons}")
+          assert len(groups) > 20, "слишком мало групп — похоже, сайт не ответил"
+          assert lessons > 2000, "слишком мало пар — похоже, парсер сломался"
+          PY
+
+      - name: Коммит
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A docs/data
+          if git diff --cached --quiet; then
+            echo "Изменений нет"
+            exit 0
+          fi
+          git commit -m "data: расписание на $(TZ=Europe/Moscow date +%d.%m.%Y)"
+          git push

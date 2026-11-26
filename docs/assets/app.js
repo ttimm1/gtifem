@@ -58,7 +58,10 @@
   const pad = (n) => String(n).padStart(2, '0');
   const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
+  let DEBUG_NOW = null;
+
   function mskNow() {
+    if (DEBUG_NOW) return new Date(DEBUG_NOW);
     try {
       const s = new Date().toLocaleString('sv-SE', { timeZone: 'Europe/Moscow' });
       const d = new Date(s.replace(' ', 'T'));
@@ -418,7 +421,9 @@
     const weekDays = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
     const sunday = weekDays[6];
 
-    $('#weekTitle').textContent = `${monday.getDate()} – ${sunday.getDate()} ${MONTH_GEN[sunday.getMonth()]}`;
+    $('#weekTitle').textContent = monday.getMonth() === sunday.getMonth()
+      ? `${monday.getDate()} – ${sunday.getDate()} ${MONTH_GEN[sunday.getMonth()]}`
+      : `${monday.getDate()} ${MONTH_GEN[monday.getMonth()].slice(0, 3)} – ${sunday.getDate()} ${MONTH_GEN[sunday.getMonth()].slice(0, 3)}`;
 
     const has = (d) => (dayOfSchedule(iso(d))?.lessons?.length || 0) > 0;
     const todayISO = iso(now);
@@ -775,7 +780,18 @@
       matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', syncTelegramChrome);
     }
 
+    const params = new URLSearchParams(location.search);
+    if (params.get('theme')) applyTheme(params.get('theme'), false);
+    if (params.get('now')) {
+      const d = new Date(params.get('now'));
+      if (!isNaN(d)) DEBUG_NOW = d;
+    }
+
     let gid = localStorage.getItem(LS.group) || null;
+    const startParam = tg?.initDataUnsafe?.start_param || '';
+    const deepGroup = startParam && /^[0-9]+([,][0-9]+)*$/.test(startParam) ? startParam : '';
+    if (params.get('group')) gid = params.get('group');
+    else if (deepGroup) gid = deepGroup;
     try {
       const cloud = await new Promise((resolve) => {
         if (!tg?.CloudStorage?.getItem) return resolve(null);
@@ -797,7 +813,8 @@
 
     state.loading = false;
     renderAllScreens();
-    if (!gid && state.catalog) setTimeout(openPicker, 350);
+    if (params.get('screen')) setTab(params.get('screen'));
+    if (params.get('picker') || (!gid && state.catalog)) setTimeout(openPicker, 350);
   }
 
   document.addEventListener('DOMContentLoaded', () => {

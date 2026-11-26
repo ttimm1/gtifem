@@ -33,7 +33,7 @@ from lxml import html as lxml_html
 
 BASE = "https://gtifem.ru/dekanat/raspisanie/"
 ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
+DATA = ROOT / "docs" / "data"
 SCHEDULE = DATA / "schedule"
 
 UA = (
@@ -432,9 +432,19 @@ def main() -> int:
     for i, group in enumerate(groups, 1):
         print(f"[{i}/{len(groups)}] {group['program']} · {group['speciality']} · {group['name']}")
         sched = fetch_group(group, today, cache=not args.no_cache)
-        (SCHEDULE / (group["id"].replace(",", "-") + ".json")).write_text(
-            json.dumps(sched, ensure_ascii=False, indent=1), encoding="utf-8"
-        )
+        dest = SCHEDULE / (group["id"].replace(",", "-") + ".json")
+        if dest.exists():
+            try:
+                old = json.loads(dest.read_text(encoding="utf-8"))
+                old_n = len(old.get("days", []))
+                new_n = len(sched.get("days", []))
+                # Защита от полупустого ответа сайта: не затираем хорошие данные.
+                if old_n and new_n < max(4, old_n * 0.4):
+                    print(f"  ! {group['id']}: новый ответ пустой ({new_n} дней из {old_n}), оставляю прежние данные")
+                    sched = old
+            except json.JSONDecodeError:
+                pass
+        dest.write_text(json.dumps(sched, ensure_ascii=False, indent=1), encoding="utf-8")
         catalog.append(
             {**group, "days": len(sched["days"]), "months": sched["months"],
              "lessons": sum(len(d["lessons"]) for d in sched["days"])}

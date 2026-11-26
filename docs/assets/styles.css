@@ -1047,3 +1047,30 @@ main {
 }
 .onboard-item strong { display: block; font-size: 14.5px; letter-spacing: -.01em; }
 .onboard-item span { display: block; font-size: 12.5px; color: var(--muted-2); margin-top: 3px; line-height: 1.4; }
+
+/* ---------- узкие экраны ---------- */
+
+#groupChipText {
+  max-width: 118px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 374px) {
+  .brand-title { display: none; }
+  .brand-sep { display: none; }
+  .hero { padding: 16px 15px 14px; }
+  .hero-date { font-size: 10.5px; letter-spacing: .045em; }
+  .hero-state { font-size: 10.5px; padding: 3px 7px; }
+  .hero-subject { font-size: 22px; }
+  .hero-subject.small { font-size: 18px; }
+  .hero-meta { font-size: 12.5px; gap: 5px 11px; }
+  .section-title h2 { font-size: 17px; }
+  .lesson { grid-template-columns: 46px 1fr; gap: 9px; }
+  .lesson-subject { font-size: 15.5px; }
+  .tab { font-size: 10px; }
+  .week-title { font-size: 14px; }
+  .day-pill .dn { font-size: 14.5px; }
+  .cal-cell .n { font-size: 13px; }
+}

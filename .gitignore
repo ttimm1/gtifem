@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 build/
 .env
+tools/preview/render
+tools/preview/ocr
