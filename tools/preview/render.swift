@@ -16,6 +16,7 @@ final class Renderer: NSObject, WKNavigationDelegate {
 
     init(url: URL, width: CGFloat, height: CGFloat, scale: CGFloat, out: String, wait: TimeInterval, js: String?) {
         let cfg = WKWebViewConfiguration()
+        cfg.websiteDataStore = .nonPersistent()
         cfg.suppressesIncrementalRendering = false
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
         web = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: height), configuration: cfg)
@@ -28,7 +29,7 @@ final class Renderer: NSObject, WKNavigationDelegate {
         window.contentView = web
         window.orderBack(nil)
         web.navigationDelegate = self
-        web.load(URLRequest(url: url))
+        web.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
         DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in
             self?.snapshot()
         }

@@ -53,6 +53,9 @@ jobs:
 
       - name: Коммит
         run: |
+          # Отметка времени: гарантирует активность репозитория, иначе GitHub
+          # отключает cron после 60 дней без коммитов.
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > docs/data/last_run.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A docs/data
