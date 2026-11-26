@@ -1206,7 +1206,7 @@
     if (navigator.share) {
       try {
         if (!navigator.canShare || navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file], title: 'Расписание' });
+          await navigator.share({ files: [file] });
           return;
         }
       } catch (err) {
