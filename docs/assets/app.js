@@ -5,6 +5,7 @@
 (() => {
   'use strict';
 
+  const splashStart = Date.now();
   const CONFIG = window.FEM_CONFIG || {};
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
 
@@ -17,8 +18,8 @@
   };
 
   const PALETTES = [
+    { id: 'ocean', name: 'Океан', accent: '#2F63E8', accent2: '#7FA8FF', a: '#06101F', b: '#1E49C8' },
     { id: 'crimson', name: 'Академия', accent: '#E4002B', accent2: '#FF6B7F', a: '#1C0408', b: '#B3001F' },
-    { id: 'ocean', name: 'Океан', accent: '#2F63E8', accent2: '#6E9BFF', a: '#0C1730', b: '#1F4FC4' },
     { id: 'emerald', name: 'Изумруд', accent: '#0E9F6E', accent2: '#4ADE9E', a: '#04251C', b: '#0A7A57' },
     { id: 'violet', name: 'Лаванда', accent: '#7457F5', accent2: '#B39DFF', a: '#171033', b: '#4B2FC7' },
     { id: 'sunset', name: 'Закат', accent: '#E85D33', accent2: '#FFA36B', a: '#2A0E08', b: '#C2411F' },
@@ -36,12 +37,13 @@
   const state = {
     tab: 'today',
     theme: 'auto',
-    paletteId: 'crimson',
+    paletteId: 'ocean',
     groupId: null,
     catalog: null,
     schedule: null,
     weekOffset: 0,
     weekSelected: null,
+    weekMode: 'day',
     cal: null,
     calSelected: null,
     program: 'Все',
@@ -136,6 +138,16 @@
     return null;
   }
 
+  function hideSplash(minMs = 1150) {
+    const wait = Math.max(0, minMs - (Date.now() - splashStart));
+    setTimeout(() => {
+      const el = document.getElementById('splash');
+      if (!el) return;
+      el.classList.add('done');
+      setTimeout(() => el.remove(), 520);
+    }, wait);
+  }
+
   function toast(msg) {
     const el = $('#toast');
     el.textContent = msg;
@@ -150,6 +162,29 @@
 
   /* ---------- настройки ---------- */
 
+  function hex2rgb(hex) {
+    const h = hex.replace('#', '');
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+
+  function mixHex(a, b, t) {
+    const A = hex2rgb(a);
+    const B = hex2rgb(b);
+    return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, '0')).join('');
+  }
+
+  function isDarkMode() {
+    return state.theme === 'dark' || (state.theme === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+  }
+
+  /** На тёмном фоне акцент чуть светлее — иначе синий «тонет». */
+  function syncAccent() {
+    const p = PALETTES.find((x) => x.id === state.paletteId) || PALETTES[0];
+    const r = document.documentElement.style;
+    r.setProperty('--accent', isDarkMode() ? mixHex(p.accent, '#FFFFFF', 0.2) : p.accent);
+    r.setProperty('--accent-2', p.accent2);
+  }
+
   function applyPalette(id, persist = true) {
     const p = PALETTES.find((x) => x.id === id) || PALETTES[0];
     state.paletteId = p.id;
@@ -161,12 +196,14 @@
     const meta = document.querySelector('meta[name=theme-color]');
     if (meta) meta.setAttribute('content', p.a);
     if (persist) localStorage.setItem(LS.palette, p.id);
+    syncAccent();
   }
 
   function applyTheme(mode, persist = true) {
     state.theme = mode;
     document.documentElement.dataset.theme = mode;
     if (persist) localStorage.setItem(LS.theme, mode);
+    syncAccent();
     syncTelegramChrome();
   }
 
@@ -182,9 +219,15 @@
   /* ---------- данные ---------- */
 
   async function fetchJSON(path, opts = {}) {
-    const res = await fetch(path, { cache: opts.fresh ? 'no-store' : 'default' });
-    if (!res.ok) throw new Error(res.status);
-    return res.json();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 9000);
+    try {
+      const res = await fetch(path, { cache: opts.fresh ? 'no-store' : 'default', signal: ctrl.signal });
+      if (!res.ok) throw new Error(res.status);
+      return await res.json();
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async function loadCatalog(force = false) {
@@ -325,6 +368,29 @@
       </div>`;
   }
 
+  /** Список пар одного дня: вертикальный таймлайн с рельсом времени. */
+  function timelineHTML(lessons, nowMin, isToday) {
+    return lessons.map((l) => {
+      const s = minOf(l.start);
+      const e = minOf(l.end);
+      const cls = isToday ? (nowMin >= e ? 'past' : nowMin >= s && nowMin < e ? 'now' : '') : '';
+      const ti = typeInfo(l.type);
+      return `
+        <div class="lesson ${cls}">
+          <div class="rail"><time>${esc(l.start)}</time><em>${esc(l.end)}</em></div>
+          <div class="lesson-body">
+            ${cls === 'now' ? '<span class="lesson-flag">сейчас</span>' : ''}
+            <div class="lesson-subject">${esc(l.subject)}</div>
+            <div class="lesson-meta">
+              ${ti ? `<span class="badge ${ti.cls}">${ti.label}</span>` : ''}
+              ${l.room ? `<span class="m"><svg class="ic"><use href="#i-pin"/></svg>${esc(l.room)}</span>` : ''}
+              ${l.teacher ? `<span class="m"><svg class="ic"><use href="#i-person"/></svg>${esc(l.teacher)}</span>` : ''}
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
   function renderToday() {
     const body = $('#todayBody');
     if (state.loading) {
@@ -385,25 +451,7 @@
 
     const lessons = day?.lessons || [];
     const listHTML = lessons.length
-      ? lessons.map((l) => {
-          const s = minOf(l.start);
-          const e = minOf(l.end);
-          const cls = nowMin >= e ? 'past' : nowMin >= s && nowMin < e ? 'now' : '';
-          const ti = typeInfo(l.type);
-          return `
-            <div class="lesson ${cls}">
-              <div class="rail"><time>${esc(l.start)}</time><em>${esc(l.end)}</em></div>
-              <div class="lesson-body">
-                ${cls === 'now' ? '<span class="lesson-flag">сейчас</span>' : ''}
-                <div class="lesson-subject">${esc(l.subject)}</div>
-                <div class="lesson-meta">
-                  ${ti ? `<span class="badge ${ti.cls}">${ti.label}</span>` : ''}
-                  ${l.room ? `<span class="m"><svg class="ic"><use href="#i-pin"/></svg>${esc(l.room)}</span>` : ''}
-                  ${l.teacher ? `<span class="m"><svg class="ic"><use href="#i-person"/></svg>${esc(l.teacher)}</span>` : ''}
-                </div>
-              </div>
-            </div>`;
-        }).join('')
+      ? timelineHTML(lessons, nowMin, true)
       : `<div class="empty"><div class="big">☕️</div><h3>Сегодня пар нет</h3><p>Отдыхай — или загляни на вкладку «Неделя».</p></div>`;
 
     body.innerHTML = `
@@ -419,17 +467,25 @@
 
   function renderWeek() {
     const now = mskNow();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
     const monday = addDays(startOfWeek(now), state.weekOffset * 7);
     const weekDays = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
     const sunday = weekDays[6];
+    const todayISO = iso(now);
+    const inWeek = weekDays.some((d) => iso(d) === todayISO);
 
     $('#weekTitle').textContent = monday.getMonth() === sunday.getMonth()
       ? `${monday.getDate()} – ${sunday.getDate()} ${MONTH_GEN[sunday.getMonth()]}`
       : `${monday.getDate()} ${MONTH_GEN[monday.getMonth()].slice(0, 3)} – ${sunday.getDate()} ${MONTH_GEN[sunday.getMonth()].slice(0, 3)}`;
 
     const has = (d) => (dayOfSchedule(iso(d))?.lessons?.length || 0) > 0;
-    const todayISO = iso(now);
-    const selISO = state.weekSelected || todayISO;
+
+    // Если выбранный день не из этой недели — показываем сегодня или понедельник.
+    let selISO = state.weekSelected;
+    if (!selISO || !weekDays.some((d) => iso(d) === selISO)) {
+      selISO = inWeek ? todayISO : iso(monday);
+    }
+    state.weekSelected = selISO;
 
     $('#dayStrip').innerHTML = weekDays.map((d, i) => {
       const id = iso(d);
@@ -445,27 +501,50 @@
       </button>`;
     }).join('');
 
-    $('#weekBody').innerHTML = weekDays.map((d) => {
-      const id = iso(d);
-      const day = dayOfSchedule(id);
-      const lessons = day?.lessons || [];
-      const isToday = id === todayISO;
-      const head = `<div class="week-day-head">
-        <h3>${WD_FULL[(d.getDay() + 6) % 7].replace(/^./, (c) => c.toUpperCase())} <span class="num">${d.getDate()} ${MONTH_GEN[d.getMonth()]}</span></h3>
-        <span class="cnt">${lessons.length ? lessons.length + ' ' + lessonsWord(lessons.length) : '—'}</span>
-      </div>`;
-      const rows = lessons.length
-        ? `<div class="compact">${lessons.map((l) => {
-            const ti = typeInfo(l.type);
-            return `<div class="crow">
-              <div><div class="ct">${esc(l.start)}</div><div class="cd">${esc(l.end)}</div></div>
-              <div><div class="cs">${esc(l.subject)}</div><div class="cd">${[l.room ? 'ауд. ' + l.room : '', l.teacher].filter(Boolean).map(esc).join(' · ')}</div></div>
-              ${ti ? `<span class="badge ${ti.cls}">${ti.label}</span>` : '<span></span>'}
-            </div>`;
-          }).join('')}</div>`
-        : `<div class="day-free">${isToday ? 'Сегодня пар нет' : 'Пар нет'}</div>`;
-      return `<section class="week-day${isToday ? ' today' : ''}" id="wd-${id}">${head}${rows}</section>`;
-    }).join('');
+    const selDate = parseISO(selISO);
+    const selDay = dayOfSchedule(selISO);
+    const selLessons = selDay?.lessons || [];
+    const isToday = selISO === todayISO;
+    const label = `${WD_FULL[(selDate.getDay() + 6) % 7].replace(/^./, (c) => c.toUpperCase())}, ${selDate.getDate()} ${MONTH_GEN[selDate.getMonth()]}`;
+
+    const toggle = `<div class="week-sub">
+      <span class="ws-day"><b>${label}</b>${selLessons.length ? ` · ${selLessons.length} ${lessonsWord(selLessons.length)}` : ''}</span>
+      <button id="weekModeBtn">${state.weekMode === 'week' ? 'по дням' : 'вся неделя'}</button>
+    </div>`;
+
+    if (state.weekMode === 'week') {
+      $('#weekBody').innerHTML = toggle + weekDays.map((d) => {
+        const id = iso(d);
+        const day = dayOfSchedule(id);
+        const lessons = day?.lessons || [];
+        const dayIsToday = id === todayISO;
+        const head = `<div class="week-day-head clickable" data-goday="${id}">
+          <h3>${WD_FULL[(d.getDay() + 6) % 7].replace(/^./, (c) => c.toUpperCase())} <span class="num">${d.getDate()} ${MONTH_GEN[d.getMonth()]}</span></h3>
+          <span class="cnt">${lessons.length ? lessons.length + ' ' + lessonsWord(lessons.length) : '—'}</span>
+        </div>`;
+        const rows = lessons.length
+          ? `<div class="compact">${lessons.map((l) => {
+              const ti = typeInfo(l.type);
+              return `<div class="crow">
+                <div><div class="ct">${esc(l.start)}</div><div class="cd">${esc(l.end)}</div></div>
+                <div><div class="cs">${esc(l.subject)}</div><div class="cd">${[l.room ? 'ауд. ' + l.room : '', l.teacher].filter(Boolean).map(esc).join(' · ')}</div></div>
+                ${ti ? `<span class="badge ${ti.cls}">${ti.label}</span>` : '<span></span>'}
+              </div>`;
+            }).join('')}</div>`
+          : `<div class="day-free">${dayIsToday ? 'Сегодня пар нет' : 'Пар нет'}</div>`;
+        return `<section class="week-day${dayIsToday ? ' today' : ''}" id="wd-${id}">${head}${rows}</section>`;
+      }).join('');
+    } else {
+      $('#weekBody').innerHTML = toggle + (selLessons.length
+        ? `<div class="day-list">${timelineHTML(selLessons, nowMin, isToday)}</div>`
+        : `<div class="empty"><div class="big">${isToday ? '☕️' : '🌤'}</div><h3>${isToday ? 'Сегодня пар нет' : 'Пар нет'}</h3><p>Выбери другой день в полоске выше — или загляни в «Всё».</p></div>`);
+    }
+
+    $('#weekModeBtn')?.addEventListener('click', () => {
+      state.weekMode = state.weekMode === 'week' ? 'day' : 'week';
+      renderWeek();
+      haptic('light');
+    });
   }
 
   /* ---------- всё / календарь ---------- */
@@ -804,7 +883,7 @@
     renderToday();
 
     applyTheme(localStorage.getItem(LS.theme) || 'auto', false);
-    applyPalette(localStorage.getItem(LS.palette) || 'crimson', false);
+    applyPalette(localStorage.getItem(LS.palette) || 'ocean', false);
 
     if (tg) {
       try {
@@ -813,7 +892,10 @@
         tg.setHeaderColor('#F4F1EE');
         tg.onEvent?.('themeChanged', syncTelegramChrome);
       } catch (_) { /* noop */ }
-      matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', syncTelegramChrome);
+      matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
+        syncAccent();
+        syncTelegramChrome();
+      });
     }
 
     const params = new URLSearchParams(location.search);
@@ -868,7 +950,19 @@
       if (!b) return;
       state.weekSelected = b.dataset.day;
       renderWeek();
-      document.getElementById('wd-' + b.dataset.day)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (state.weekMode === 'week') {
+        document.getElementById('wd-' + b.dataset.day)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      haptic('light');
+    });
+
+    $('#weekBody').addEventListener('click', (e) => {
+      const head = e.target.closest('[data-goday]');
+      if (!head) return;
+      state.weekSelected = head.dataset.goday;
+      state.weekMode = 'day';
+      renderWeek();
+      haptic('light');
     });
 
     $('#calPrev').addEventListener('click', () => {
@@ -896,6 +990,13 @@
     try { tg?.BackButton?.onClick(closePicker); } catch (_) { /* noop */ }
 
     setTab('today');
-    init();
+    setTimeout(() => hideSplash(0), 2600);
+    init()
+      .catch(() => {
+        state.loading = false;
+        state.error = 'Не удалось загрузить расписание.';
+        renderAllScreens();
+      })
+      .finally(() => hideSplash(1050));
   });
 })();

@@ -8,7 +8,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "assets"
+OUT = ROOT / "docs" / "assets"
 
 CREAM = (247, 236, 226)
 GOLD = (232, 180, 90)
@@ -18,7 +18,7 @@ def lerp(a, b, t):
     return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
-def gradient(size: int, top=(34, 4, 10), bottom=(150, 0, 28)) -> Image.Image:
+def gradient(size: int, top=(7, 17, 34), bottom=(28, 73, 202)) -> Image.Image:
     img = Image.new("RGB", (size, size))
     px = img.load()
     for y in range(size):
@@ -30,7 +30,7 @@ def gradient(size: int, top=(34, 4, 10), bottom=(150, 0, 28)) -> Image.Image:
     return img
 
 
-def radial_glow(size: int, center=(0.82, 0.12), radius=0.75, color=(255, 107, 127), alpha=110):
+def radial_glow(size: int, center=(0.82, 0.12), radius=0.75, color=(127, 168, 255), alpha=120):
     layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
     cx, cy = center[0] * size, center[1] * size
