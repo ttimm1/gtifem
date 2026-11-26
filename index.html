@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#1C0408">
+<title>ФЭМ · Расписание</title>
+<link rel="icon" href="assets/icon-192.png">
+<link rel="apple-touch-icon" href="assets/icon-192.png">
+<link rel="stylesheet" href="assets/styles.css">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-today" viewBox="0 0 24 24"><path d="M12 3.2a8.8 8.8 0 1 0 0 17.6 8.8 8.8 0 0 0 0-17.6Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.6v4.8l3.2 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-week" viewBox="0 0 24 24"><rect x="3.2" y="5" width="17.6" height="15" rx="4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3.5 9.6h17M8 3.4v3.2M16 3.4v3.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="8.2" cy="13.2" r="1.15" fill="currentColor"/><circle cx="12" cy="13.2" r="1.15" fill="currentColor"/><circle cx="15.8" cy="13.2" r="1.15" fill="currentColor"/><circle cx="8.2" cy="16.6" r="1.15" fill="currentColor"/><circle cx="12" cy="16.6" r="1.15" fill="currentColor"/></symbol>
+    <symbol id="i-all" viewBox="0 0 24 24"><rect x="3.2" y="4.6" width="7.2" height="7.2" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="13.6" y="4.6" width="7.2" height="7.2" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="3.2" y="15" width="7.2" height="5.4" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="13.6" y="15" width="7.2" height="5.4" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.4" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="18.6" cy="12" r="1.8" fill="currentColor"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s6.2-5.4 6.2-10.2A6.2 6.2 0 0 0 5.8 10.8C5.8 15.6 12 21 12 21Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="10.6" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.4v4.9l3.1 1.9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="8.4" r="3.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5.2 20c.6-3.6 3.3-5.6 6.8-5.6s6.2 2 6.8 5.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15.7 15.7 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5.5 12.4 4.2 4.2 8.8-9" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5.5 6.4 6.5L9 18.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.2 12a7.2 7.2 0 1 1-2.1-5.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M19.4 4.6v4.7h-4.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6.6 10.2a5.4 5.4 0 0 1 10.8 0c0 4.2 1.7 5.4 1.7 5.4H4.9s1.7-1.2 1.7-5.4Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M10 18.6a2.1 2.1 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 2.6v2M12 19.4v2M2.6 12h2M19.4 12h2M5.4 5.4l1.4 1.4M17.2 17.2l1.4 1.4M18.6 5.4l-1.4 1.4M6.8 17.2l-1.4 1.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.4A8.2 8.2 0 0 1 9.6 4 8.4 8.4 0 1 0 20 14.4Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-auto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 3.6v16.8a8.4 8.4 0 0 0 0-16.8Z" fill="currentColor"/></symbol>
+    <symbol id="i-telegram" viewBox="0 0 24 24"><path d="M21.2 4.4 2.9 11.5c-.9.3-.9 1.5.1 1.7l4.6 1.2 1.7 5.2c.2.7 1.1.8 1.5.2l2.5-3.3 4.6 3.4c.6.4 1.4.1 1.6-.6l3-12.6c.2-.9-.7-1.6-1.3-1.3Z" fill="currentColor"/></symbol>
+  </defs>
+</svg>
+
+<div class="app" id="app">
+
+  <header class="topbar" id="topbar">
+    <div class="brand">
+      <span class="brand-mark">ФЭМ</span>
+      <span class="brand-sep"></span>
+      <span class="brand-title" id="screenTitle">Сегодня</span>
+    </div>
+    <div class="topbar-actions">
+      <button class="icon-btn" id="refreshBtn" aria-label="Обновить">
+        <svg class="ic"><use href="#i-refresh"/></svg>
+      </button>
+      <button class="group-chip" id="groupChip">
+        <span id="groupChipText">Группа</span>
+        <svg class="ic ic-sm"><use href="#i-chevron"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <!-- ЭКРАН: СЕГОДНЯ -->
+    <section class="screen" id="screen-today" data-screen="today">
+      <div id="todayBody"></div>
+    </section>
+
+    <!-- ЭКРАН: НЕДЕЛЯ -->
+    <section class="screen" id="screen-week" data-screen="week" hidden>
+      <div class="week-nav">
+        <button class="icon-btn ghost" id="weekPrev" aria-label="Предыдущая неделя"><svg class="ic" style="transform:rotate(180deg)"><use href="#i-chevron"/></svg></button>
+        <div class="week-title" id="weekTitle">—</div>
+        <button class="icon-btn ghost" id="weekNext" aria-label="Следующая неделя"><svg class="ic"><use href="#i-chevron"/></svg></button>
+      </div>
+      <div class="day-strip" id="dayStrip"></div>
+      <div id="weekBody"></div>
+    </section>
+
+    <!-- ЭКРАН: ВСЁ -->
+    <section class="screen" id="screen-all" data-screen="all" hidden>
+      <div class="cal-head">
+        <button class="icon-btn ghost" id="calPrev" aria-label="Предыдущий месяц"><svg class="ic" style="transform:rotate(180deg)"><use href="#i-chevron"/></svg></button>
+        <div class="cal-title" id="calTitle">—</div>
+        <button class="icon-btn ghost" id="calNext" aria-label="Следующий месяц"><svg class="ic"><use href="#i-chevron"/></svg></button>
+      </div>
+      <div class="calendar card" id="calendar"></div>
+      <div id="calBody"></div>
+    </section>
+
+    <!-- ЭКРАН: ЕЩЁ -->
+    <section class="screen" id="screen-more" data-screen="more" hidden>
+      <div id="moreBody"></div>
+    </section>
+
+  </main>
+
+  <nav class="tabbar">
+    <button class="tab" data-tab="today">
+      <svg class="ic"><use href="#i-today"/></svg>
+      <span>Сегодня</span>
+    </button>
+    <button class="tab" data-tab="week">
+      <svg class="ic"><use href="#i-week"/></svg>
+      <span>Неделя</span>
+    </button>
+    <button class="tab" data-tab="all">
+      <svg class="ic"><use href="#i-all"/></svg>
+      <span>Всё</span>
+    </button>
+    <button class="tab" data-tab="more">
+      <svg class="ic"><use href="#i-more"/></svg>
+      <span>Ещё</span>
+    </button>
+  </nav>
+
+  <!-- ШТОРКА: ВЫБОР ГРУППЫ -->
+  <div class="sheet" id="picker" hidden>
+    <div class="sheet-panel">
+      <div class="sheet-head">
+        <div>
+          <div class="eyebrow">ФЭМ СПбГТИ</div>
+          <h2>Группа</h2>
+        </div>
+        <button class="icon-btn ghost" id="pickerClose" aria-label="Закрыть"><svg class="ic"><use href="#i-close"/></svg></button>
+      </div>
+      <div class="search">
+        <svg class="ic ic-sm"><use href="#i-search"/></svg>
+        <input id="groupSearch" type="search" placeholder="Номер или направление" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="segmented" id="programTabs"></div>
+      <div class="group-list" id="groupList"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+</div>
+
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
