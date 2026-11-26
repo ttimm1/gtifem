@@ -8,3 +8,4 @@ tools/preview/ocr
 
 bot/.webhook_secret
 .netrc
+screenshots/

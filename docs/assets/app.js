@@ -49,6 +49,7 @@
     loading: true,
     error: null,
     updated: null,
+    subscribed: localStorage.getItem('fem:subscribed') === '1',
   };
 
   /* ---------- утилиты ---------- */
@@ -246,6 +247,7 @@
     state.cal = null;
     state.calSelected = null;
     try { tg?.CloudStorage?.setItem('group', id, () => {}); } catch (_) { /* noop */ }
+    if (state.subscribed) apiSubscribe(true, true);
     renderAllScreens();
   }
 
@@ -566,8 +568,8 @@
             </button>
             <button class="set-row" id="notifyRow">
               <span class="si"><svg class="ic"><use href="#i-bell"/></svg></span>
-              <span class="st"><b>Напоминания в боте</b><small>Утренняя сводка пар в Telegram</small></span>
-              <svg class="ic ic-chev"><use href="#i-chevron"/></svg>
+              <span class="st"><b>Напоминания в боте</b><small>${state.subscribed ? 'Каждое утро в 8:00' : 'Утренняя сводка пар в Telegram'}</small></span>
+              <span class="sv" style="${state.subscribed ? 'color:var(--accent);font-weight:650' : ''}">${state.subscribed ? 'вкл' : 'выкл'}</span>
             </button>
           </div>
         </div>
@@ -642,7 +644,40 @@
     } catch (_) { return '—'; }
   }
 
+  async function apiSubscribe(enable, quiet = false) {
+    if (!state.groupId) {
+      if (!quiet) { toast('Сначала выбери группу'); openPicker(); }
+      return false;
+    }
+    const endpoint = enable ? '/api/subscribe' : '/api/unsubscribe';
+    try {
+      const res = await fetch((CONFIG.api || '') + endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ initData: tg?.initData || '', group: state.groupId }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'fail');
+      state.subscribed = !!data.subscribed;
+      localStorage.setItem('fem:subscribed', state.subscribed ? '1' : '0');
+      if (!quiet) {
+        toast(state.subscribed ? 'Готово: сводка каждое утро в 8:00' : 'Напоминания выключены');
+        haptic('medium');
+        renderMore();
+      }
+      return true;
+    } catch (err) {
+      if (!quiet) toast('Не получилось — попробуй ещё раз');
+      return false;
+    }
+  }
+
   function notifyBot() {
+    // Внутри Telegram — тихо подписываемся по initData, без перехода в чат.
+    if (tg?.initData) {
+      apiSubscribe(!state.subscribed);
+      return;
+    }
     if (!CONFIG.bot) {
       toast('Бот пока не подключён');
       return;

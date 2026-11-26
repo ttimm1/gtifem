@@ -95,6 +95,22 @@ gtifem/
 
 Подписчики лежат в KV (`USERS`, ключи `u:<chat_id>`).
 
+**Напоминания включаются прямо в приложении.** Кнопка «Напоминания в боте» в
+разделе «Ещё» шлёт `POST /api/subscribe` с `initData` из Telegram. Воркер
+проверяет подпись по алгоритму WebApp:
+
+```
+secret_key = HMAC_SHA256(bot_token, ключ "WebAppData")
+hash       = hex(HMAC_SHA256(data_check_string, secret_key))
+```
+
+`data_check_string` — все поля initData, кроме `hash`, отсортированные по имени
+и склеенные через `\n`. Плюс проверка `auth_date` (не старше суток) и что
+группа есть в каталоге. Ответ `{ ok: true, subscribed: true }`.
+
+CORS открыт только для `https://ttimm1.github.io`. Вне Telegram кнопка
+открывает `t.me/<bot>?start=<группа>` (fallback).
+
 ## Деплой бота
 
 ```bash

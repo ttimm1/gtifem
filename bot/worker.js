@@ -62,6 +62,101 @@ async function fetchData(env, path) {
   return res.json();
 }
 
+const CORS_ORIGIN = 'https://ttimm1.github.io';
+
+function corsHeaders() {
+  return {
+    'access-control-allow-origin': CORS_ORIGIN,
+    'access-control-allow-headers': 'content-type',
+    'access-control-allow-methods': 'POST, OPTIONS',
+    'access-control-max-age': '86400',
+  };
+}
+
+function jsonOut(obj, status = 200) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8', ...corsHeaders() },
+  });
+}
+
+const enc = new TextEncoder();
+
+async function hmacSha256(key, data) {
+  const raw = typeof key === 'string' ? enc.encode(key) : key;
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(data));
+  return new Uint8Array(sig);
+}
+
+const toHex = (buf) => [...buf].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+/** Проверка Telegram WebApp initData (подпись и свежесть). */
+async function checkInitData(initData, botToken) {
+  if (!initData || !botToken) return null;
+  const params = new URLSearchParams(initData);
+  const hash = params.get('hash') || '';
+  if (!hash) return null;
+  params.delete('hash');
+
+  const pairs = [...params.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const dataCheckString = pairs.map(([k, v]) => `${k}=${v}`).join('\n');
+  // secret_key = HMAC_SHA256(bot_token, "WebAppData"): ключ — "WebAppData", данные — токен.
+  const secret = await hmacSha256('WebAppData', botToken);
+  const expected = toHex(await hmacSha256(secret, dataCheckString));
+  if (expected !== hash) return null;
+
+  const authDate = Number(params.get('auth_date') || 0);
+  if (!authDate || Date.now() / 1000 - authDate > 86400) return null;
+
+  try {
+    const user = JSON.parse(params.get('user') || 'null');
+    return user && user.id ? user : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function handleApi(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch (_) {
+    return jsonOut({ ok: false, error: 'bad_json' }, 400);
+  }
+  const user = await checkInitData(body.initData, env.BOT_TOKEN);
+  if (!user) return jsonOut({ ok: false, error: 'bad_init' }, 401);
+
+  const group = String(body.group || '').trim();
+  const action = new URL(request.url).pathname;
+
+  if (action.endsWith('/unsubscribe')) {
+    if (env.USERS) await env.USERS.delete(`u:${user.id}`);
+    return jsonOut({ ok: true, subscribed: false });
+  }
+
+  if (!group) return jsonOut({ ok: false, error: 'no_group' }, 400);
+
+  let name = '';
+  try {
+    const cat = await fetchData(env, 'catalog.json');
+    const g = (cat.groups || []).find((x) => x.id === group || x.name === group);
+    if (g) name = g.name;
+  } catch (_) { /* offline — поверим */ }
+  if (!name) return jsonOut({ ok: false, error: 'unknown_group' }, 404);
+
+  const prev = env.USERS ? await env.USERS.get(`u:${user.id}`, 'json') : null;
+  if (env.USERS) {
+    await env.USERS.put(`u:${user.id}`, JSON.stringify({
+      group, enabled: true, added: prev?.added || Date.now(),
+      name: user.username || user.first_name || '',
+    }));
+  }
+  return jsonOut({ ok: true, subscribed: true, group, name });
+}
+
 async function groupName(env, id) {
   try {
     const cat = await fetchData(env, 'catalog.json');
@@ -303,6 +398,15 @@ export default {
       return new Response(JSON.stringify({ ok: true, service: 'fem-schedule-bot' }), {
         headers: { 'content-type': 'application/json' },
       });
+    }
+
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: corsHeaders() });
+    }
+
+    if (url.pathname === '/api/subscribe' || url.pathname === '/api/unsubscribe') {
+      if (request.method !== 'POST') return jsonOut({ ok: false }, 405);
+      return handleApi(request, env);
     }
 
     if (url.pathname === '/telegram' && request.method === 'POST') {

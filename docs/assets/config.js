@@ -3,4 +3,5 @@ window.FEM_CONFIG = {
   version: '1.0.0',
   bot: 'spbgti_raspisanie_bot',
   channel: '',
+  api: 'https://fem-schedule-bot.timur-fem.workers.dev',
 };
