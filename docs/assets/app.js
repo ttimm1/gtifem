@@ -657,7 +657,7 @@
             </button>
             <button class="set-row" id="notifyRow">
               <span class="si"><svg class="ic"><use href="#i-bell"/></svg></span>
-              <span class="st"><b>Напоминания в боте</b><small>${state.subscribed ? 'Каждое утро в 8:00' : 'Утренняя сводка пар в Telegram'}</small></span>
+              <span class="st"><b>Напоминания в боте</b><small>${state.subscribed ? 'Каждое утро' : 'Утренняя сводка пар в Telegram'}</small></span>
               <span class="sv" style="${state.subscribed ? 'color:var(--accent);font-weight:650' : ''}">${state.subscribed ? 'вкл' : 'выкл'}</span>
             </button>
           </div>
@@ -750,7 +750,7 @@
       state.subscribed = !!data.subscribed;
       localStorage.setItem('fem:subscribed', state.subscribed ? '1' : '0');
       if (!quiet) {
-        toast(state.subscribed ? 'Готово: сводка каждое утро в 8:00' : 'Напоминания выключены');
+        toast(state.subscribed ? 'Готово: сводка каждое утро' : 'Напоминания выключены');
         haptic('medium');
         renderMore();
       }

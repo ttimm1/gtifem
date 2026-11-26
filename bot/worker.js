@@ -9,7 +9,7 @@
  *   POST /api/subscribe   — подписка из приложения (initData)
  *   POST /api/unsubscribe — отписка
  *   POST /api/share       — прислать картинку расписания в чат
- *   cron 2 раза в день    — утренняя сводка (08:00 МСК) и вечерняя (20:00 МСК)
+ *   cron каждую минуту   — сводка по «пачкам»: 07:00–08:00 и 20:00–21:00 МСК
  *
  * Переменные окружения:
  *   BOT_TOKEN, WEBHOOK_SECRET, WEBAPP_URL, DATA_URL, USERS (KV)
@@ -148,6 +148,7 @@ async function handleApi(request, env) {
 
   if (action.endsWith('/unsubscribe')) {
     if (env.USERS) await env.USERS.delete(`u:${user.id}`);
+    await removeSubscriber(env, user.id);
     return jsonOut({ ok: true, subscribed: false });
   }
 
@@ -167,6 +168,7 @@ async function handleApi(request, env) {
       group, enabled: true, added: prev?.added || Date.now(),
       name: user.username || user.first_name || '',
     }));
+    await addSubscriber(env, user.id);
   }
   return jsonOut({ ok: true, subscribed: true, group, name });
 }
@@ -292,6 +294,37 @@ function keyboard(env) {
   };
 }
 
+async function subscriberIds(env) {
+  if (!env.USERS) return [];
+  const cached = await env.USERS.get('u:index', 'json');
+  if (Array.isArray(cached)) return cached.map(String);
+
+  // Первый запуск: строим индекс по уже существующим подпискам.
+  const page = await env.USERS.list({ prefix: 'u:', limit: 1000 });
+  const ids = page.keys.map((k) => k.name.slice(2)).filter((x) => /^\d+$/.test(x));
+  await env.USERS.put('u:index', JSON.stringify(ids));
+  return ids;
+}
+
+async function addSubscriber(env, chatId) {
+  if (!env.USERS) return;
+  const ids = await subscriberIds(env);
+  const id = String(chatId);
+  if (!ids.includes(id)) {
+    ids.push(id);
+    await env.USERS.put('u:index', JSON.stringify(ids));
+  }
+}
+
+async function removeSubscriber(env, chatId) {
+  if (!env.USERS) return;
+  const ids = await subscriberIds(env);
+  const id = String(chatId);
+  if (ids.includes(id)) {
+    await env.USERS.put('u:index', JSON.stringify(ids.filter((x) => x !== id)));
+  }
+}
+
 async function saveUser(env, chatId, groupId, enabled = true) {
   if (!env.USERS) return;
   const key = `u:${chatId}`;
@@ -300,6 +333,7 @@ async function saveUser(env, chatId, groupId, enabled = true) {
     key,
     JSON.stringify({ group: groupId || prev?.group || '', enabled, added: prev?.added || Date.now() })
   );
+  await addSubscriber(env, chatId);
 }
 
 /* ---------- апдейты ---------- */
@@ -341,7 +375,7 @@ async function handleUpdate(env, update) {
         chat_id: chatId,
         text:
           `Запомнил: группа <b>${escapeHtml(name)}</b>.\n\n` +
-          'Каждое утро в 8:00 пришлю пары на день. Не нужно — /stop.',
+          'Каждое утро пришлю пары на день. Не нужно — /stop.',
         parse_mode: 'HTML',
         reply_markup: keyboard(env),
       });
@@ -362,6 +396,7 @@ async function handleUpdate(env, update) {
 
   if (cmd === '/stop') {
     if (env.USERS) await env.USERS.delete(`u:${chatId}`);
+    await removeSubscriber(env, chatId);
     await tg(env, 'sendMessage', {
       chat_id: chatId,
       text: 'Хорошо, утреннюю сводку выключил. Вернуть — /start.',
@@ -413,45 +448,89 @@ async function handleUpdate(env, update) {
   }
 }
 
-async function digest(env, evening) {
+const DIGEST_PARTITIONS = 60;
+
+/** Окно рассылки: 07:00–08:00 и 20:00–21:00 МСК, по минуте на «пачку». */
+function digestWindow(now) {
+  const mins = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const morning = 7 * 60;
+  const evening = 20 * 60;
+
+  if (mins >= morning && mins < morning + DIGEST_PARTITIONS) {
+    return { phase: 'morning', index: mins - morning, dateISO: iso(now) };
+  }
+  if (mins >= evening && mins < evening + DIGEST_PARTITIONS) {
+    const t = new Date(now);
+    t.setUTCDate(t.getUTCDate() + 1);
+    return { phase: 'evening', index: mins - evening, dateISO: iso(t) };
+  }
+  return null;
+}
+
+function digestMessage(phase, dateISO, lessons, groupName) {
+  const d = new Date(`${dateISO}T00:00:00Z`);
+  const head = `${cap(WD_FULL[d.getUTCDay()])}, ${d.getUTCDate()} ${MONTH_GEN[d.getUTCMonth()]}`;
+  const group = `<b>${escapeHtml(groupName)}</b>`;
+
+  if (!lessons.length) {
+    return phase === 'morning'
+      ? `☀️ <b>Доброе утро</b>\n\n${escapeHtml(head)} · группа ${group}\n\nСегодня пар нет — отдыхай.`
+      : `🌙 <b>Завтра</b>\n\n${escapeHtml(head)} · группа ${group}\n\nПар нет — выспись как следует.`;
+  }
+
+  const title = phase === 'morning' ? '☀️ <b>Доброе утро</b>' : '🌙 <b>Завтра</b>';
+  return `${title}\n${escapeHtml(head)} · группа ${group} · ${lessons.length} ${lessonsWord(lessons.length)}\n\n${dayText({ lessons })}`;
+}
+
+/**
+ * Рассылка идёт не одним запросом, а по минуте: в 07:00 каждый получает свою
+ * «пачку» по остатку от деления id. Так бесплатный лимит воркера (50 запросов
+ * за запуск) не мешает обслуживать тысячи подписчиков.
+ */
+async function digestTick(env) {
   if (!env.USERS) return;
-  const now = mskNow();
-  const list = await env.USERS.list({ prefix: 'u:', limit: 1000 });
-  const cache = new Map();
+  const target = digestWindow(mskNow());
+  if (!target) return;
 
-  for (const key of list.keys) {
-    const user = await env.USERS.get(key.name, 'json');
+  const ids = await subscriberIds(env);
+  const mine = ids.filter((id) => Math.abs(Number(id)) % DIGEST_PARTITIONS === target.index);
+  if (!mine.length) return;
+
+  let digest = null;
+  try {
+    digest = await fetchData(env, 'digest.json');
+  } catch (_) { /* если файла нет — идём за расписанием группы */ }
+
+  const schedules = new Map();
+
+  for (const id of mine) {
+    const user = await env.USERS.get(`u:${id}`, 'json');
     if (!user?.enabled || !user.group) continue;
-    const chatId = key.name.slice(2);
     try {
-      let sched = cache.get(user.group);
-      if (!sched) {
-        sched = await fetchData(env, `schedule/${user.group.replace(/,/g, '-')}.json`);
-        cache.set(user.group, sched);
-      }
+      let lessons = null;
+      let name = digest?.names?.[user.group] || user.group;
+      const packed = digest?.groups?.[user.group]?.[target.dateISO];
+      if (Array.isArray(packed)) lessons = packed;
 
-      let body;
-      if (evening) {
-        const tomorrow = new Date(now);
-        tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-        const day = (sched.days || []).find((d) => d.date === iso(tomorrow));
-        body = day
-          ? `🌙 <b>Завтра, ${escapeHtml(dayHeadline(tomorrow))}</b>\n` +
-            `Группа <b>${escapeHtml(sched.name || sched.group)}</b> · ${day.lessons.length} ${lessonsWord(day.lessons.length)}\n\n` +
-            dayText(day)
-          : '🌙 Завтра пар нет — выспись как следует.';
-      } else {
-        body = `☀️ <b>Доброе утро</b>\n\n${buildToday(sched, now)}`;
+      if (!Array.isArray(lessons)) {
+        let sched = schedules.get(user.group);
+        if (!sched) {
+          sched = await fetchData(env, `schedule/${user.group.replace(/,/g, '-')}.json`);
+          schedules.set(user.group, sched);
+        }
+        const day = (sched.days || []).find((d) => d.date === target.dateISO);
+        lessons = day?.lessons || [];
+        name = sched.name || sched.group;
       }
 
       await tg(env, 'sendMessage', {
-        chat_id: Number(chatId),
-        text: body.slice(0, 3900),
+        chat_id: Number(id),
+        text: digestMessage(target.phase, target.dateISO, lessons, name).slice(0, 3900),
         parse_mode: 'HTML',
         reply_markup: keyboard(env),
       });
     } catch (_) {
-      // не роняем рассылку из-за одного пользователя
+      // один пользователь не должен ломать остальных
     }
   }
 }
@@ -503,7 +582,6 @@ export default {
   },
 
   async scheduled(event, env) {
-    const hourUtc = new Date(event.scheduledTime).getUTCHours();
-    await digest(env, hourUtc >= 12);
+    await digestTick(env);
   },
 };

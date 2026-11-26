@@ -26,7 +26,7 @@ import re
 import subprocess
 import sys
 import time
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from lxml import html as lxml_html
@@ -417,6 +417,37 @@ def fetch_group(group: dict, today: date, cache: bool = True) -> dict:
     }
 
 
+def build_digest_only() -> int:
+    """Пересобирает digest.json из уже скачанных расписаний (без сети)."""
+    catalog = json.loads((DATA / "catalog.json").read_text(encoding="utf-8"))
+    msk_today = (datetime.now(timezone.utc) + timedelta(hours=3)).date()
+    days = [msk_today.isoformat(), (msk_today + timedelta(days=1)).isoformat()]
+    groups: dict[str, dict[str, list]] = {}
+    names: dict[str, str] = {}
+
+    for entry in catalog.get("groups", []):
+        gid = entry["id"]
+        path = SCHEDULE / (gid.replace(",", "-") + ".json")
+        if not path.exists():
+            continue
+        sched = json.loads(path.read_text(encoding="utf-8"))
+        by_date = {d["date"]: d["lessons"] for d in sched.get("days", [])}
+        names[gid] = entry.get("name") or gid
+        groups[gid] = {day: by_date.get(day, []) for day in days}
+
+    payload = {
+        "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "days": days,
+        "names": names,
+        "groups": groups,
+    }
+    (DATA / "digest.json").write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+    )
+    print(f"digest.json: {len(groups)} групп, {days[0]}–{days[1]}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=0, help="ограничить число групп")
@@ -424,6 +455,7 @@ def main() -> int:
     parser.add_argument("--no-cache", action="store_true")
     parser.add_argument("--groups", default="", help="список групп через запятую")
     parser.add_argument("--skip-discovery", action="store_true", help="взять каталог из data/catalog.json")
+    parser.add_argument("--digest-only", action="store_true", help="только пересобрать digest.json")
     args = parser.parse_args()
 
     global IFACE
@@ -431,6 +463,9 @@ def main() -> int:
 
     DATA.mkdir(parents=True, exist_ok=True)
     SCHEDULE.mkdir(parents=True, exist_ok=True)
+
+    if args.digest_only:
+        return build_digest_only()
 
     print("Каталог групп…")
     if args.skip_discovery and (DATA / "catalog.json").exists():
@@ -457,6 +492,12 @@ def main() -> int:
 
     print(f"Групп: {len(groups)}")
     today = date.today()
+    # Диапазон для утренней и вечерней сводки бота — по Москве.
+    msk_today = (datetime.now(timezone.utc) + timedelta(hours=3)).date()
+    digest_days = [msk_today.isoformat(), (msk_today + timedelta(days=1)).isoformat()]
+    digest_groups: dict[str, dict[str, list]] = {}
+    digest_names: dict[str, str] = {}
+
     catalog = []
     seen_ids = set()
     for i, group in enumerate(groups, 1):
@@ -475,6 +516,12 @@ def main() -> int:
             except json.JSONDecodeError:
                 pass
         dest.write_text(json.dumps(sched, ensure_ascii=False, indent=1), encoding="utf-8")
+
+        by_date = {d["date"]: d["lessons"] for d in sched["days"]}
+        digest_names[group["id"]] = group["name"]
+        # Пустой список — это «пар нет»: боту не нужно идти за расписанием.
+        digest_groups[group["id"]] = {day: by_date.get(day, []) for day in digest_days}
+
         catalog.append(
             {**group, "days": len(sched["days"]), "months": sched["months"],
              "lessons": sum(len(d["lessons"]) for d in sched["days"])}
@@ -502,6 +549,17 @@ def main() -> int:
     }
     (DATA / "catalog.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+
+    # Компактный файл для сводки бота: только сегодня и завтра по каждой группе.
+    digest_payload = {
+        "updated": payload["updated"],
+        "days": digest_days,
+        "names": digest_names,
+        "groups": digest_groups,
+    }
+    (DATA / "digest.json").write_text(
+        json.dumps(digest_payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
     )
     total_lessons = sum(g["lessons"] for g in catalog)
     print(f"Готово: {len(catalog)} групп, {total_lessons} пар, {DATA}/catalog.json")

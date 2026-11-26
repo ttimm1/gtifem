@@ -12,4 +12,4 @@ binding = "USERS"
 id = "9c09010ad6194d77bdd4cf8c669389d2"
 
 [triggers]
-crons = ["0 5 * * *", "0 17 * * *"]
+crons = ["* * * * *"]
