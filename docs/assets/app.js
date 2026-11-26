@@ -850,7 +850,7 @@
     state.loading = false;
     renderAllScreens();
     if (params.get('screen')) setTab(params.get('screen'));
-    if (params.get('picker') || (!gid && state.catalog)) setTimeout(openPicker, 350);
+    if (params.get('picker')) setTimeout(openPicker, 200);
   }
 
   document.addEventListener('DOMContentLoaded', () => {
