@@ -831,6 +831,63 @@
     return lines;
   }
 
+
+  function drawTelegramBadge(ctx, cx, cy, radius) {
+    // белое кольцо, синий круг и белый самолётик
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius * 1.16, 0, Math.PI * 2);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fillStyle = '#2AABEE';
+    ctx.fill();
+
+    const plane = new Path2D(
+      'M21.2 4.4 2.9 11.5c-.9.3-.9 1.5.1 1.7l4.6 1.2 1.7 5.2c.2.7 1.1.8 1.5.2' +
+      'l2.5-3.3 4.6 3.4c.6.4 1.4.1 1.6-.6l3-12.6c.2-.9-.7-1.6-1.3-1.3Z'
+    );
+    const s = radius * 1.42;
+    ctx.save();
+    ctx.translate(cx - s / 2, cy - s / 2);
+    ctx.scale(s / 24, s / 24);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fill(plane);
+    ctx.restore();
+  }
+
+  function drawQrBadge(ctx, x, y, size) {
+    const qr = window.FEM_QR;
+    if (!qr || !qr.rows?.length) return;
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(3, 12, 30, .45)';
+    ctx.shadowBlur = 34;
+    ctx.shadowOffsetY = 14;
+    rr(ctx, x, y, size, size, 26);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fill();
+    ctx.restore();
+
+    const pad = Math.round(size * 0.085);
+    const inner = size - pad * 2;
+    const cell = inner / qr.size;
+    ctx.fillStyle = '#0B1626';
+    for (let r = 0; r < qr.size; r += 1) {
+      const row = qr.rows[r];
+      for (let c = 0; c < qr.size; c += 1) {
+        if (row[c] === '1') {
+          const px = x + pad + c * cell;
+          const py = y + pad + r * cell;
+          ctx.fillRect(px, py, Math.ceil(cell + 0.4), Math.ceil(cell + 0.4));
+        }
+      }
+    }
+
+    drawTelegramBadge(ctx, x + size / 2, y + size / 2, size * 0.105);
+  }
+
   function shareTarget(el) {
     if (el?.dataset?.day) return { kind: 'day', dateISO: el.dataset.day };
     if (el?.dataset?.share === 'week') return { kind: 'week' };
@@ -923,6 +980,9 @@
     ctx.fillStyle = 'rgba(255,255,255,.5)';
     ctx.font = F(600, 18);
     ctx.fillText('СПбГТИ · РАСПИСАНИЕ', pad + 108, 116);
+
+    // QR на бота — в правом верхнем углу, как визитка
+    drawQrBadge(ctx, W - pad - 156, 58, 156);
 
     const title = data.kind === 'week' ? 'Неделя' : cap(WD_FULL[(data.date.getDay() + 6) % 7]);
     const subtitle = data.kind === 'week'
@@ -1070,23 +1130,13 @@
     ctx.font = F(500, 18);
     ctx.fillText('ФЭМ · Расписание', pad, H - 46);
     ctx.textAlign = 'right';
-    ctx.fillText('ttimm1.github.io/gtifem', W - pad, H - 46);
+    ctx.fillText('Санкт-Петербург', W - pad, H - 46);
     ctx.textAlign = 'left';
 
     return canvas;
   }
 
-  function sharePlainCaption(data) {
-    return data.kind === 'week'
-      ? `Расписание на неделю ${data.range} · группа ${data.group.name}`
-      : `Расписание на ${data.date.getDate()} ${MONTH_GEN[data.date.getMonth()]} · группа ${data.group.name}`;
-  }
 
-  function shareHtmlCaption(data) {
-    return data.kind === 'week'
-      ? `Неделя <b>${esc(data.range)}</b> · группа <b>${esc(data.group.name)}</b>`
-      : `Расписание на <b>${data.date.getDate()} ${esc(MONTH_GEN[data.date.getMonth()])}</b> · группа <b>${esc(data.group.name)}</b>`;
-  }
 
   function closeShare() {
     $('#shareSheet').hidden = true;
@@ -1111,13 +1161,11 @@
     const send = $('#shareSend');
     send.hidden = !(tg?.initData);
     $('#shareSheet').hidden = false;
-    $('#shareSheet').dataset.caption = shareHtmlCaption(data);
     try { tg?.BackButton?.show(); } catch (_) { /* noop */ }
   }
 
   async function sendShareToChat() {
     const btn = $('#shareSend');
-    const caption = $('#shareSheet').dataset.caption || '';
     const image = $('#shareImage').src;
     btn.disabled = true;
     const label = btn.innerHTML;
@@ -1126,7 +1174,7 @@
       const res = await fetch(`${CONFIG.api}/api/share`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ initData: tg?.initData || '', image, caption }),
+        body: JSON.stringify({ initData: tg?.initData || '', image }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'fail');
@@ -1154,12 +1202,11 @@
     const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
     const name = `fem-${String(data.group.id).replace(/,/g, '-')}-${data.kind}.jpg`;
     const file = dataUrlToFile(dataUrl, name);
-    const plain = sharePlainCaption(data);
 
     if (navigator.share) {
       try {
         if (!navigator.canShare || navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file], title: 'Расписание', text: plain });
+          await navigator.share({ files: [file], title: 'Расписание' });
           return;
         }
       } catch (err) {

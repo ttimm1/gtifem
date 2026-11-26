@@ -195,10 +195,9 @@ async function handleShare(request, env) {
   const mime = (/^data:(image\/[a-z+]+);base64/i.exec(String(body.image || '')) || [])[1] || 'image/jpeg';
   const ext = mime === 'image/png' ? 'png' : 'jpg';
 
+  // Фото уходит без подписи — человек пересылает его как обычную картинку.
   const form = new FormData();
   form.append('chat_id', String(user.id));
-  form.append('caption', String(body.caption || '').slice(0, 900));
-  form.append('parse_mode', 'HTML');
   form.append('photo', new Blob([bytes], { type: mime }), `schedule.${ext}`);
 
   const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendPhoto`, {
