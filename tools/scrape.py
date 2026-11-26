@@ -72,7 +72,7 @@ MONTHS_GEN = {
 
 WEEKDAYS = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
 
-# Программы (отделения) и их специальности. Порядок важен для UI.
+# Запасной список отделений — нужен, только если разметка сайта не распозналась.
 PROGRAMS = [
     ("Бакалавриат", ["Экономика", "Реклама", "Маркетинг", "Финансовый менеджмент",
                      "Производственный менеджмент", "Логистика", "Управление персоналом",
@@ -80,6 +80,10 @@ PROGRAMS = [
     ("Магистратура", ["Инновационный менеджмент"]),
     ("СПО", ["Экономика и бухгалтерский учет (по отраслям)", "Технологи"]),
 ]
+
+# Направления, которых нет в фильтре сайта, но которые он умеет отдавать.
+# «Технологи» (СПО) существует только как class course2322 в разметке.
+EXTRA_SPECIALITIES = [("СПО", "Технологи", [1, 2, 3, 4, 5])]
 
 IFACE = os.environ.get("GTIFEM_IFACE", "")
 
@@ -267,77 +271,103 @@ def parse_table(html_text: str, today: date) -> dict[str, dict]:
     return days
 
 
-def discover_groups() -> list[dict]:
-    page = get_page()
-    doc = lxml_html.fromstring(page)
+def parse_catalog_shape(doc) -> tuple[dict[int, str], list[tuple[str, str, int]], dict[int, set[int]]]:
+    """Разбирает фильтры страницы: отделения, направления и курсы.
 
-    course_map: dict[int, set[int]] = {}
-    for li in doc.xpath("//li[contains(@class,'course')][@data-course]"):
-        classes = li.get("class", "").split()
-        for cls in classes:
-            m = re.match(r"course(\d+)$", cls)
-            if m:
-                course_map.setdefault(int(m.group(1)), set()).add(int(li.get("data-course")))
+    Всё берётся из разметки, а не из списка в коде, чтобы новые направления
+    и группы подхватывались сами.
+    """
+    programs: dict[int, str] = {}
+    for a in doc.xpath("//div[contains(@class,'section') and contains(@class,'first')]//a[@data-id]"):
+        try:
+            programs[int(a.get("data-id"))] = clean(a.text_content())
+        except (TypeError, ValueError):
+            continue
 
-    # id специальности из разметки (special<ID>) -> название
-    special_names: dict[int, str] = {}
+    specials: list[tuple[str, str, int]] = []
     for li in doc.xpath("//li[contains(@class,'special')]"):
         a = li.xpath(".//a[@data-id]")
         if not a:
             continue
-        classes = li.get("class", "").split()
-        sid = None
-        for cls in classes:
+        pid = None
+        for cls in (li.get("class") or "").split():
             m = re.match(r"special(\d+)$", cls)
             if m:
-                sid = int(m.group(1))
-        if sid and a[0].get("data-id"):
-            special_names[int(a[0].get("data-id"))] = clean(a[0].text_content())
+                pid = int(m.group(1))
+        try:
+            sid = int(a[0].get("data-id"))
+        except (TypeError, ValueError):
+            continue
+        specials.append((programs.get(pid, "Другое"), clean(a[0].text_content()), sid))
+
+    course_map: dict[int, set[int]] = {}
+    for li in doc.xpath("//li[contains(@class,'course')][@data-course]"):
+        for cls in (li.get("class") or "").split():
+            m = re.match(r"course(\d+)$", cls)
+            if m:
+                course_map.setdefault(int(m.group(1)), set()).add(int(li.get("data-course")))
+
+    return programs, specials, course_map
+
+
+def discover_groups() -> list[dict]:
+    page = get_page()
+    doc = lxml_html.fromstring(page)
+
+    programs, specials, course_map = parse_catalog_shape(doc)
+
+    # Если разметка поменялась и ничего не нашлось — работаем по старому списку.
+    if not specials:
+        print("  ! фильтры не распознаны, использую запасной список", file=sys.stderr)
+        specials = [(program, name, -1) for program, names in PROGRAMS for name in names]
+
+    # У СПО «Технологи» нет ссылки в фильтре, но есть курсы (course2322) —
+    # сайт подставляет название только в своём JS. Держим его отдельно.
+    known = {name for _, name, _ in specials}
+    for program, name, courses in EXTRA_SPECIALITIES:
+        if name not in known:
+            specials.append((program, name, -1))
+            course_map[-1] = set(courses)
 
     groups: list[dict] = []
     seen: set[str] = set()
 
-    for program, specialities in PROGRAMS:
-        for speciality in specialities:
-            courses = set()
-            sid = next((k for k, v in special_names.items() if v == speciality), None)
-            if sid:
-                # у СПО «Технологи» в разметке курсов нет — пробуем 1..5
-                courses = course_map.get(sid, set())
-            if not courses:
-                courses = {1, 2, 3, 4, 5}
+    for program, speciality, sid in specials:
+        courses = sorted(course_map.get(sid, set()))
+        if not courses:
+            courses = [1, 2, 3, 4, 5]
 
-            for course in sorted(courses):
-                try:
-                    raw = post(special=speciality, course=str(course))
-                    sleep_between()
-                except Exception as exc:  # noqa: BLE001
-                    print(f"  ! группы {speciality}/{course}: {exc}", file=sys.stderr)
+        for course in courses:
+            try:
+                raw = post(special=speciality, course=str(course))
+                sleep_between()
+            except Exception as exc:  # noqa: BLE001
+                print(f"  ! группы {speciality}/{course}: {exc}", file=sys.stderr)
+                continue
+            try:
+                rows = json.loads(raw)
+            except json.JSONDecodeError:
+                continue  # null / ошибка Bitrix
+            if not isinstance(rows, list):
+                continue
+            for item in rows:
+                if not isinstance(item, list) or len(item) < 2:
                     continue
-                try:
-                    rows = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue  # null / ошибка Bitrix
-                if not isinstance(rows, list):
+                name = str(item[0]).strip()
+                gid = str(item[1]).strip()
+                if not name or gid in seen:
                     continue
-                for item in rows:
-                    if not isinstance(item, list) or len(item) < 2:
-                        continue
-                    name = str(item[0]).strip()
-                    gid = str(item[1]).strip()
-                    if not name or gid in seen:
-                        continue
-                    seen.add(gid)
-                    groups.append(
-                        {
-                            "id": gid,
-                            "name": name,
-                            "program": program,
-                            "speciality": speciality,
-                            "course": course,
-                        }
-                    )
-                    print(f"  + {program} · {speciality} · {course} к. · {name}")
+                seen.add(gid)
+                groups.append(
+                    {
+                        "id": gid,
+                        "name": name,
+                        "program": program,
+                        "speciality": speciality,
+                        "course": course,
+                    }
+                )
+                print(f"  + {program} · {speciality} · {course} к. · {name}")
     return groups
 
 

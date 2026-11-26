@@ -5,7 +5,7 @@ Telegram Mini App с расписанием занятий факультета 
 
 - **Приложение:** <https://ttimm1.github.io/gtifem/>
 - **Бот:** [@spbgti_raspisanie_bot](https://t.me/spbgti_raspisanie_bot)
-- **Данные:** обновляются каждый день в 06:30 МСК через GitHub Actions
+- **Данные:** обновляются дважды в день: 06:30 и 12:30 МСК через GitHub Actions
 - **Бот живёт** на Cloudflare Workers (бесплатно, без домашнего компьютера)
 
 ## Что внутри
