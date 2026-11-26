@@ -1350,7 +1350,10 @@
     if (params.get('sheet')) {
       const target = params.get('sheet') === 'week' ? { kind: 'week' } : { kind: 'day', dateISO: params.get('date') || iso(mskNow()) };
       const cardData = shareCardData(target);
-      if (cardData) openShareSheet(drawShareCard(cardData).toDataURL('image/jpeg', 0.92), 'preview.jpg', cardData);
+      if (cardData) {
+        openShareSheet(drawShareCard(cardData).toDataURL('image/jpeg', 0.92), 'preview.jpg', cardData);
+        if (params.get('send')) $('#shareSend').hidden = false;
+      }
     }
 
     state.loading = false;
