@@ -868,7 +868,9 @@
 
     let dateISO = target.dateISO || iso(mskNow());
     let day = dayOfSchedule(dateISO);
-    if (!day || !day.lessons?.length) {
+    // «Сегодня» без пар — показываем ближайший учебный день; конкретный день
+    // из календаря шарим как есть, даже если он пустой.
+    if ((!day || !day.lessons?.length) && dateISO === iso(mskNow())) {
       const next = (state.schedule.days || []).find((d) => d.date > dateISO && d.lessons?.length);
       if (next) { dateISO = next.date; day = next; }
     }
@@ -1369,7 +1371,7 @@
       const btn = e.target.closest('[data-share]');
       if (btn) {
         e.preventDefault();
-        shareSchedule(btn);
+        shareSchedule(btn).catch(() => toast('Не получилось подготовить картинку'));
       }
     });
 
