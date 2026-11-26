@@ -1235,7 +1235,18 @@
 
   function renderPicker() {
     const tabs = $('#programTabs');
-    tabs.innerHTML = PROGRAMS.map((p) => `<button data-p="${p}" class="${state.program === p ? 'on' : ''}">${p}</button>`).join('');
+    // Отделения берём из каталога: если на сайте появится новое, вкладка
+    // появится сама, без правок кода.
+    const present = [...new Set((state.catalog?.groups || []).map((g) => g.program))];
+    const preferred = ['Бакалавриат', 'Магистратура', 'СПО'];
+    const orderedPrograms = [
+      ...preferred.filter((p) => present.includes(p)),
+      ...present.filter((p) => !preferred.includes(p)),
+    ];
+    const tabsList = ['Все', ...orderedPrograms];
+    if (!tabsList.includes(state.program)) state.program = 'Все';
+
+    tabs.innerHTML = tabsList.map((p) => `<button data-p="${p}" class="${state.program === p ? 'on' : ''}">${p}</button>`).join('');
     tabs.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
       state.program = b.dataset.p;
       renderPicker();
@@ -1253,7 +1264,7 @@
     });
 
     const order = { 'Бакалавриат': 0, 'Магистратура': 1, 'СПО': 2 };
-    groups.sort((a, b) => (order[a.program] - order[b.program]) || a.speciality.localeCompare(b.speciality, 'ru') || a.course - b.course || a.name.localeCompare(b.name));
+    groups.sort((a, b) => ((order[a.program] ?? 9) - (order[b.program] ?? 9)) || a.speciality.localeCompare(b.speciality, 'ru') || a.course - b.course || a.name.localeCompare(b.name));
 
     let html = '';
     let lastKey = '';
