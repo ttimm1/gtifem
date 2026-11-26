@@ -5,3 +5,6 @@ build/
 .env
 tools/preview/render
 tools/preview/ocr
+
+bot/.webhook_secret
+.netrc

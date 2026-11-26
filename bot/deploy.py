@@ -82,14 +82,22 @@ def multipart(fields: dict[str, str], file_field: str, filename: str, content: b
 
 
 def tg(bot_token: str, method: str, payload=None):
+    """Через curl: на некоторых сетях Python-OpenSSL не проходит TLS до api.telegram.org."""
+    import subprocess
+
     url = f"https://api.telegram.org/bot{bot_token}/{method}"
-    req = urllib.request.Request(url, data=json.dumps(payload or {}).encode(), method="POST")
-    req.add_header("Content-Type", "application/json")
+    out = subprocess.run(
+        ["curl", "-sS", "-m", "30", "-X", "POST", url,
+         "-H", "Content-Type: application/json",
+         "--data-binary", json.dumps(payload or {})],
+        capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        return {"ok": False, "description": out.stderr.strip()[:200]}
     try:
-        with urllib.request.urlopen(req, timeout=30) as res:
-            return json.loads(res.read().decode())
-    except urllib.error.HTTPError as err:
-        return json.loads(err.read().decode())
+        return json.loads(out.stdout)
+    except json.JSONDecodeError:
+        return {"ok": False, "description": out.stdout[:200]}
 
 
 def main() -> int:
@@ -175,10 +183,22 @@ def main() -> int:
     status, result = call(
         "PUT", f"{API}/accounts/{acc}/workers/scripts/{args.worker}/schedules", args.token, raw=body
     )
-    print("  ", "ok" if result.get("success", True) else result.get("errors"))
+    if not result.get("success", True):
+        print("  не удалось через API:", result.get("errors"), "— поставь cron через `wrangler deploy`")
+    else:
+        print("  ok")
 
-    sub = cf("GET", f"/accounts/{acc}/workers/subdomain", args.token)
-    subdomain = sub.get("subdomain") if isinstance(sub, dict) else None
+    try:
+        sub = cf("GET", f"/accounts/{acc}/workers/subdomain", args.token)
+        subdomain = sub.get("subdomain") if isinstance(sub, dict) else None
+    except RuntimeError:
+        subdomain = None
+        name = "fem-schedule-" + secrets.token_hex(3)
+        try:
+            cf("PUT", f"/accounts/{acc}/workers/subdomain", args.token, payload={"subdomain": name})
+            subdomain = name
+        except RuntimeError as err:
+            print("  workers.dev поддомен:", err, file=sys.stderr)
     worker_url = f"https://{args.worker}.{subdomain}.workers.dev" if subdomain else None
     print(f"→ адрес: {worker_url or 'нет workers.dev поддомена — включи его в панели Cloudflare'}")
 
