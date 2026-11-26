@@ -59,6 +59,7 @@
   const $ = (sel) => document.querySelector(sel);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pad = (n) => String(n).padStart(2, '0');
+  const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
   const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
   let DEBUG_NOW = null;
@@ -370,13 +371,13 @@
 
   /** Список пар одного дня: вертикальный таймлайн с рельсом времени. */
   function timelineHTML(lessons, nowMin, isToday) {
-    return lessons.map((l) => {
+    return lessons.map((l, i) => {
       const s = minOf(l.start);
       const e = minOf(l.end);
       const cls = isToday ? (nowMin >= e ? 'past' : nowMin >= s && nowMin < e ? 'now' : '') : '';
       const ti = typeInfo(l.type);
       return `
-        <div class="lesson ${cls}">
+        <div class="lesson ${cls}" style="--i:${i}">
           <div class="rail"><time>${esc(l.start)}</time><em>${esc(l.end)}</em></div>
           <div class="lesson-body">
             ${cls === 'now' ? '<span class="lesson-flag">сейчас</span>' : ''}
@@ -402,15 +403,15 @@
         <section class="hero">
           <div class="bubble b1"></div><div class="bubble b2"></div>
           <div class="hero-top"><span class="hero-date">ФЭМ · СПбГТИ(ТУ)</span><span class="hero-state"><span class="dot"></span>расписание</span></div>
-          <h1 class="hero-subject">Привет!<br>Выбери свою группу</h1>
-          <div class="hero-meta"><span class="m">Покажу пары на сегодня, на неделю и на весь семестр.</span></div>
+          <h1 class="hero-subject">Твоё расписание</h1>
+          <div class="hero-meta"><span class="m">Выбери группу — покажу пары на сегодня, на неделю и на весь семестр.</span></div>
           <button class="hero-cta" id="onboardBtn">Выбрать группу</button>
         </section>
-        <div class="section-title"><h2>Как это работает</h2></div>
+        <div class="section-title"><h2>Что внутри</h2></div>
         <div class="onboard-list">
-          <div class="onboard-item"><b>1</b><div><strong>Один раз выбери группу</strong><span>Приложение запомнит её на этом устройстве.</span></div></div>
-          <div class="onboard-item"><b>2</b><div><strong>Смотри пары</strong><span>Сегодня, неделя и календарь на семестр — в одном месте.</span></div></div>
-          <div class="onboard-item"><b>3</b><div><strong>Данные сами обновляются</strong><span>Каждое утро расписание подтягивается с сайта факультета.</span></div></div>
+          <div class="onboard-item"><b>1</b><div><strong>Группа — один раз</strong><span>Дальше приложение помнит её само.</span></div></div>
+          <div class="onboard-item"><b>2</b><div><strong>Пары и календарь</strong><span>Сегодня, вся неделя и семестр.</span></div></div>
+          <div class="onboard-item"><b>3</b><div><strong>Картинка для друзей</strong><span>Расписание можно отправить одним касанием.</span></div></div>
         </div>`;
       $('#onboardBtn').addEventListener('click', openPicker);
       return;
@@ -460,7 +461,8 @@
         <h2>${lessons.length ? 'Сегодня' : 'Ближайшее'}</h2>
         <span>${lessons.length ? lessons.length + ' ' + lessonsWord(lessons.length) : ''}</span>
       </div>
-      <div class="day-list">${listHTML}</div>`;
+      <div class="day-list">${listHTML}</div>
+      ${lessons.length ? `<button class="share-cta" data-share="day"><svg class="ic"><use href="#i-share"/></svg>Поделиться картинкой</button>` : ''}`;
   }
 
   /* ---------- неделя ---------- */
@@ -509,7 +511,12 @@
 
     const toggle = `<div class="week-sub">
       <span class="ws-day"><b>${label}</b>${selLessons.length ? ` · ${selLessons.length} ${lessonsWord(selLessons.length)}` : ''}</span>
-      <button id="weekModeBtn">${state.weekMode === 'week' ? 'по дням' : 'вся неделя'}</button>
+      <div class="ws-actions">
+        <button class="ws-share" data-share="${state.weekMode === 'week' ? 'week' : 'day'}" aria-label="Поделиться расписанием">
+          <svg class="ic"><use href="#i-share"/></svg>
+        </button>
+        <button id="weekModeBtn">${state.weekMode === 'week' ? 'по дням' : 'вся неделя'}</button>
+      </div>
     </div>`;
 
     if (state.weekMode === 'week') {
@@ -614,7 +621,10 @@
         }).join('')}</div>`
       : `<div class="empty"><div class="big">🗓</div><h3>Пар нет</h3><p>${state.schedule ? 'В этот день занятий не стоит.' : 'Выберите группу, чтобы увидеть расписание.'}</p></div>`;
 
-    $('#calBody').innerHTML = head + body;
+    const shareBtn = day?.lessons?.length
+      ? `<button class="share-cta" data-share="day" data-day="${sel}"><svg class="ic"><use href="#i-share"/></svg>Поделиться картинкой</button>`
+      : '';
+    $('#calBody').innerHTML = head + body + shareBtn;
   }
 
   /* ---------- ещё ---------- */
@@ -770,6 +780,394 @@
     } catch (_) { window.open(url, '_blank'); }
   }
 
+
+  /* ---------- картинка расписания ---------- */
+
+  function rr(ctx, x, y, w, h, r) {
+    if (typeof ctx.roundRect === 'function') {
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, r);
+      return;
+    }
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function fitText(ctx, text, maxWidth) {
+    const t = String(text || '');
+    if (ctx.measureText(t).width <= maxWidth) return t;
+    let cut = t;
+    while (cut.length > 2 && ctx.measureText(cut + '…').width > maxWidth) cut = cut.slice(0, -1);
+    return cut.trimEnd() + '…';
+  }
+
+  function wrapText(ctx, text, maxWidth, maxLines) {
+    const words = String(text || '').split(/\s+/);
+    const lines = [];
+    let cur = '';
+    let i = 0;
+    while (i < words.length && lines.length < maxLines) {
+      const test = cur ? `${cur} ${words[i]}` : words[i];
+      if (ctx.measureText(test).width <= maxWidth) {
+        cur = test;
+        i += 1;
+      } else if (cur) {
+        lines.push(cur);
+        cur = '';
+      } else {
+        lines.push(fitText(ctx, words[i], maxWidth));
+        i += 1;
+      }
+    }
+    if (cur && lines.length < maxLines) lines.push(cur);
+    if (i < words.length && lines.length) {
+      lines[lines.length - 1] = fitText(ctx, `${lines[lines.length - 1]} ${words.slice(i).join(' ')}`, maxWidth);
+    }
+    return lines;
+  }
+
+  function shareTarget(el) {
+    if (el?.dataset?.day) return { kind: 'day', dateISO: el.dataset.day };
+    if (el?.dataset?.share === 'week') return { kind: 'week' };
+    if (state.tab === 'week') {
+      return state.weekMode === 'week'
+        ? { kind: 'week' }
+        : { kind: 'day', dateISO: state.weekSelected || iso(mskNow()) };
+    }
+    if (state.tab === 'all') return { kind: 'day', dateISO: state.calSelected || iso(mskNow()) };
+    return { kind: 'day', dateISO: iso(mskNow()) };
+  }
+
+  function shareCardData(target) {
+    const group = groupInfo(state.groupId);
+    if (!group || !state.schedule) return null;
+
+    if (target.kind === 'week') {
+      const monday = addDays(startOfWeek(mskNow()), state.weekOffset * 7);
+      const days = Array.from({ length: 7 }, (_, i) => {
+        const d = addDays(monday, i);
+        return {
+          date: iso(d),
+          weekday: WD_SHORT[i],
+          num: d.getDate(),
+          day: dayOfSchedule(iso(d)),
+        };
+      });
+      const sun = addDays(monday, 6);
+      const range = monday.getMonth() === sun.getMonth()
+        ? `${monday.getDate()}–${sun.getDate()} ${MONTH_GEN[sun.getMonth()]}`
+        : `${monday.getDate()} ${MONTH_GEN[monday.getMonth()].slice(0, 3)} – ${sun.getDate()} ${MONTH_GEN[sun.getMonth()].slice(0, 3)}`;
+      const count = days.reduce((n, d) => n + (d.day?.lessons?.length || 0), 0);
+      return { kind: 'week', group, days, range, lessonsCount: count, monday };
+    }
+
+    let dateISO = target.dateISO || iso(mskNow());
+    let day = dayOfSchedule(dateISO);
+    if (!day || !day.lessons?.length) {
+      const next = (state.schedule.days || []).find((d) => d.date > dateISO && d.lessons?.length);
+      if (next) { dateISO = next.date; day = next; }
+    }
+    const date = parseISO(dateISO);
+    return { kind: 'day', group, date, day, lessons: day?.lessons || [] };
+  }
+
+  function drawShareCard(data) {
+    const pal = PALETTES.find((p) => p.id === state.paletteId) || PALETTES[0];
+    const W = 1080;
+    const H = data.kind === 'week' ? 1620 : 1350;
+    const pad = 72;
+    const F = (weight, size) => `${weight} ${size}px "SF Pro Display", "Helvetica Neue", Arial, sans-serif`;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+
+    const bg = ctx.createLinearGradient(0, 0, W, H);
+    bg.addColorStop(0, pal.a);
+    bg.addColorStop(1, pal.b);
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    let glow = ctx.createRadialGradient(W * 0.82, H * 0.02, 10, W * 0.82, H * 0.02, W * 0.85);
+    glow.addColorStop(0, 'rgba(150,190,255,.4)');
+    glow.addColorStop(1, 'rgba(150,190,255,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, H);
+
+    glow = ctx.createRadialGradient(W * 0.05, H * 0.95, 10, W * 0.05, H * 0.95, W * 0.6);
+    glow.addColorStop(0, 'rgba(255,255,255,.14)');
+    glow.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = 'rgba(255,255,255,.045)';
+    ctx.beginPath(); ctx.arc(W * 0.94, H * 0.03, 300, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(W * 0.04, H * 0.84, 220, 0, Math.PI * 2); ctx.fill();
+
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
+
+    ctx.fillStyle = 'rgba(255,255,255,.88)';
+    ctx.font = F(800, 27);
+    ctx.fillText('ФЭМ', pad, 118);
+    ctx.fillStyle = 'rgba(255,255,255,.26)';
+    ctx.fillRect(pad + 88, 96, 2, 24);
+    ctx.fillStyle = 'rgba(255,255,255,.5)';
+    ctx.font = F(600, 18);
+    ctx.fillText('СПбГТИ · РАСПИСАНИЕ', pad + 108, 116);
+
+    const title = data.kind === 'week' ? 'Неделя' : cap(WD_FULL[(data.date.getDay() + 6) % 7]);
+    const subtitle = data.kind === 'week'
+      ? data.range
+      : `${data.date.getDate()} ${MONTH_GEN[data.date.getMonth()]}`;
+
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = F(800, 82);
+    ctx.fillText(fitText(ctx, title, W - pad * 2), pad, 286);
+    ctx.fillStyle = 'rgba(255,255,255,.66)';
+    ctx.font = F(500, 34);
+    ctx.fillText(subtitle, pad, 344);
+
+    const groupName = String(data.group.name);
+    ctx.font = F(700, 24);
+    const chipW = Math.min(ctx.measureText(groupName).width + 46, 420);
+    const chipY = 384;
+    rr(ctx, pad, chipY, chipW, 54, 15);
+    ctx.fillStyle = 'rgba(255,255,255,.12)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.15)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(groupName, pad + 23, chipY + 36);
+
+    const count = data.kind === 'week' ? data.lessonsCount : data.lessons.length;
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    ctx.font = F(500, 21);
+    ctx.fillText(`${count} ${lessonsWord(count)}`, pad + chipW + 18, chipY + 36);
+
+    ctx.textAlign = 'right';
+    ctx.font = F(400, 18);
+    ctx.fillStyle = 'rgba(255,255,255,.42)';
+    ctx.fillText(fitText(ctx, `${data.group.speciality} · ${data.group.course} курс`, 330), W - pad, chipY + 36);
+    ctx.textAlign = 'left';
+
+    if (data.kind === 'week') {
+      const top = 456;
+      const rowH = 148;
+      const gap = 8;
+      data.days.forEach((d, i) => {
+        const y = top + i * (rowH + gap);
+        rr(ctx, pad, y, W - pad * 2, rowH, 22);
+        ctx.fillStyle = 'rgba(255,255,255,.055)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,.08)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(255,255,255,.55)';
+        ctx.font = F(700, 19);
+        ctx.fillText(String(d.weekday).toUpperCase(), pad + 26, y + 50);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = F(800, 40);
+        ctx.fillText(String(d.num), pad + 26, y + 102);
+
+        ctx.fillStyle = 'rgba(255,255,255,.1)';
+        ctx.fillRect(pad + 96, y + 26, 2, 96);
+
+        const lessons = d.day?.lessons || [];
+        if (!lessons.length) {
+          ctx.fillStyle = 'rgba(255,255,255,.32)';
+          ctx.font = F(400, 22);
+          ctx.fillText('свободно', pad + 122, y + 86);
+        } else {
+          const shown = lessons.slice(0, 3);
+          shown.forEach((l, k) => {
+            const ly = y + 48 + k * 34;
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = F(700, 21);
+            ctx.fillText(l.start, pad + 122, ly);
+            ctx.fillStyle = 'rgba(255,255,255,.78)';
+            ctx.font = F(500, 21);
+            ctx.fillText(fitText(ctx, l.subject, W - pad - (pad + 200) - 74), pad + 200, ly);
+          });
+          if (lessons.length > 3) {
+            ctx.fillStyle = 'rgba(255,255,255,.4)';
+            ctx.font = F(600, 18);
+            ctx.textAlign = 'right';
+            ctx.fillText(`+${lessons.length - 3}`, W - pad - 26, y + 48);
+            ctx.textAlign = 'left';
+          }
+        }
+      });
+    } else {
+      const lessons = data.lessons;
+      if (!lessons.length) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = F(700, 46);
+        ctx.fillText('Пар нет', pad, 500);
+        ctx.fillStyle = 'rgba(255,255,255,.55)';
+        ctx.font = F(400, 26);
+        ctx.fillText('Свободный день — можно выдохнуть.', pad, 548);
+      } else {
+        const n = Math.min(lessons.length, 6);
+        const rowH = n <= 4 ? 144 : 124;
+        const gap = n <= 4 ? 14 : 12;
+        const blockH = n * rowH + (n - 1) * gap;
+        const footerY = H - 110;
+        const top = 470 + Math.max(0, Math.min(150, (footerY - 470 - blockH) / 2));
+
+        lessons.slice(0, 6).forEach((l, i) => {
+          const y = top + i * (rowH + gap);
+          rr(ctx, pad, y, W - pad * 2, rowH, 24);
+          ctx.fillStyle = 'rgba(255,255,255,.075)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(255,255,255,.09)';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = F(700, 24);
+          ctx.fillText(l.start, pad + 26, y + 50);
+          ctx.fillStyle = 'rgba(255,255,255,.42)';
+          ctx.font = F(400, 18);
+          ctx.fillText(l.end, pad + 26, y + 80);
+
+          ctx.fillStyle = pal.accent2;
+          rr(ctx, pad + 104, y + 28, 4, 68, 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = F(600, 27);
+          const lines = wrapText(ctx, l.subject, W - pad * 2 - 160 - 30, 2);
+          lines.forEach((line, k) => ctx.fillText(line, pad + 132, y + 48 + k * 32));
+
+          const meta = [l.room ? `ауд. ${l.room}` : '', l.teacher].filter(Boolean).join(' · ');
+          if (meta) {
+            ctx.fillStyle = 'rgba(255,255,255,.52)';
+            ctx.font = F(400, 19);
+            ctx.fillText(fitText(ctx, meta, W - pad * 2 - 170), pad + 132, y + (lines.length > 1 ? 108 : 84));
+          }
+        });
+
+        if (lessons.length > 6) {
+          ctx.fillStyle = 'rgba(255,255,255,.42)';
+          ctx.font = F(500, 20);
+          ctx.fillText(`и ещё ${lessons.length - 6} ${lessonsWord(lessons.length - 6)}`, pad + 6, top + blockH + 34);
+        }
+      }
+    }
+
+    ctx.fillStyle = 'rgba(255,255,255,.4)';
+    ctx.font = F(500, 18);
+    ctx.fillText('ФЭМ · Расписание', pad, H - 46);
+    ctx.textAlign = 'right';
+    ctx.fillText('ttimm1.github.io/gtifem', W - pad, H - 46);
+    ctx.textAlign = 'left';
+
+    return canvas;
+  }
+
+  function sharePlainCaption(data) {
+    return data.kind === 'week'
+      ? `Расписание на неделю ${data.range} · группа ${data.group.name}`
+      : `Расписание на ${data.date.getDate()} ${MONTH_GEN[data.date.getMonth()]} · группа ${data.group.name}`;
+  }
+
+  function shareHtmlCaption(data) {
+    return data.kind === 'week'
+      ? `Неделя <b>${esc(data.range)}</b> · группа <b>${esc(data.group.name)}</b>`
+      : `Расписание на <b>${data.date.getDate()} ${esc(MONTH_GEN[data.date.getMonth()])}</b> · группа <b>${esc(data.group.name)}</b>`;
+  }
+
+  function closeShare() {
+    $('#shareSheet').hidden = true;
+    try { tg?.BackButton?.hide(); } catch (_) { /* noop */ }
+  }
+
+  function dataUrlToFile(dataUrl, name) {
+    const parts = String(dataUrl).split(',');
+    const mime = (/data:([^;]+)/.exec(parts[0]) || [])[1] || 'image/jpeg';
+    const bin = atob(parts[1] || '');
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+    return new File([bytes], name, { type: mime });
+  }
+
+  function openShareSheet(url, name, data) {
+    $('#shareImage').src = url;
+    const dl = $('#shareDownload');
+    dl.href = url;
+    dl.setAttribute('download', name);
+    $('#shareEyebrow').textContent = data.kind === 'week' ? 'Неделя' : 'Расписание на день';
+    const send = $('#shareSend');
+    send.hidden = !(tg?.initData);
+    $('#shareSheet').hidden = false;
+    $('#shareSheet').dataset.caption = shareHtmlCaption(data);
+    try { tg?.BackButton?.show(); } catch (_) { /* noop */ }
+  }
+
+  async function sendShareToChat() {
+    const btn = $('#shareSend');
+    const caption = $('#shareSheet').dataset.caption || '';
+    const image = $('#shareImage').src;
+    btn.disabled = true;
+    const label = btn.innerHTML;
+    btn.textContent = 'Отправляю…';
+    try {
+      const res = await fetch(`${CONFIG.api}/api/share`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ initData: tg?.initData || '', image, caption }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'fail');
+      closeShare();
+      toast('Отправил в чат — перешли картинку дальше');
+    } catch (_) {
+      toast('Не получилось отправить');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = label;
+    }
+  }
+
+  async function shareSchedule(el) {
+    const data = shareCardData(shareTarget(el));
+    if (!data) {
+      toast('Сначала выбери группу');
+      return;
+    }
+    haptic('light');
+
+    // Всё, что можно, делаем синхронно: на iOS системный share-sheet
+    // требует, чтобы navigator.share вызвали внутри жеста, без await.
+    const canvas = drawShareCard(data);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    const name = `fem-${String(data.group.id).replace(/,/g, '-')}-${data.kind}.jpg`;
+    const file = dataUrlToFile(dataUrl, name);
+    const plain = sharePlainCaption(data);
+
+    if (navigator.share) {
+      try {
+        if (!navigator.canShare || navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: 'Расписание', text: plain });
+          return;
+        }
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+      }
+    }
+
+    openShareSheet(dataUrl, name, data);
+  }
+
   /* ---------- выбор группы ---------- */
 
   function openPicker() {
@@ -882,7 +1280,7 @@
     state.loading = true;
     renderToday();
 
-    applyTheme(localStorage.getItem(LS.theme) || 'auto', false);
+    applyTheme(localStorage.getItem(LS.theme) || 'light', false);
     applyPalette(localStorage.getItem(LS.palette) || 'ocean', false);
 
     if (tg) {
@@ -929,6 +1327,30 @@
       state.error = 'Проверь интернет и попробуй ещё раз.';
     }
 
+    if (params.get('card')) {
+      const target = params.get('card') === 'week'
+        ? { kind: 'week' }
+        : { kind: 'day', dateISO: params.get('date') || iso(mskNow()) };
+      const cardData = shareCardData(target);
+      if (cardData) {
+        const canvas = drawShareCard(cardData);
+        hideSplash(0);
+        document.body.innerHTML = '';
+        document.body.style.cssText = 'margin:0;background:#000';
+        const img = new Image();
+        img.src = canvas.toDataURL('image/png');
+        img.style.cssText = 'width:100%;display:block';
+        document.body.appendChild(img);
+        return;
+      }
+    }
+
+    if (params.get('sheet')) {
+      const target = params.get('sheet') === 'week' ? { kind: 'week' } : { kind: 'day', dateISO: params.get('date') || iso(mskNow()) };
+      const cardData = shareCardData(target);
+      if (cardData) openShareSheet(drawShareCard(cardData).toDataURL('image/jpeg', 0.92), 'preview.jpg', cardData);
+    }
+
     state.loading = false;
     renderAllScreens();
     if (params.get('screen')) setTab(params.get('screen'));
@@ -942,6 +1364,18 @@
     $('#picker').addEventListener('click', (e) => { if (e.target.id === 'picker') closePicker(); });
     $('#refreshBtn').addEventListener('click', () => refresh(true));
     $('#groupSearch').addEventListener('input', (e) => { state.query = e.target.value; renderPicker(); });
+
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-share]');
+      if (btn) {
+        e.preventDefault();
+        shareSchedule(btn);
+      }
+    });
+
+    $('#shareClose').addEventListener('click', closeShare);
+    $('#shareSheet').addEventListener('click', (e) => { if (e.target.id === 'shareSheet') closeShare(); });
+    $('#shareSend').addEventListener('click', sendShareToChat);
 
     $('#weekPrev').addEventListener('click', () => { state.weekOffset -= 1; state.weekSelected = null; renderWeek(); haptic('light'); });
     $('#weekNext').addEventListener('click', () => { state.weekOffset += 1; state.weekSelected = null; renderWeek(); haptic('light'); });
@@ -987,7 +1421,12 @@
       haptic('light');
     });
 
-    try { tg?.BackButton?.onClick(closePicker); } catch (_) { /* noop */ }
+    try {
+      tg?.BackButton?.onClick(() => {
+        if (!$('#shareSheet').hidden) closeShare();
+        else closePicker();
+      });
+    } catch (_) { /* noop */ }
 
     setTab('today');
     setTimeout(() => hideSplash(0), 2600);

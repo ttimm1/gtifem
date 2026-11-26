@@ -218,11 +218,11 @@ def main() -> int:
     print("  webhook:", r.get("ok"), r.get("description", ""))
 
     r = tg(args.bot_token, "setMyCommands", {"commands": [
-        {"command": "start", "description": "Открыть приложение"},
+        {"command": "start", "description": "Открыть расписание"},
         {"command": "today", "description": "Пары на сегодня"},
         {"command": "week", "description": "Пары на неделю"},
-        {"command": "stop", "description": "Отключить утреннюю сводку"},
-        {"command": "help", "description": "Помощь"},
+        {"command": "stop", "description": "Выключить утреннюю сводку"},
+        {"command": "help", "description": "Что умеет бот"},
     ]})
     print("  команды:", r.get("ok"))
 
@@ -232,12 +232,14 @@ def main() -> int:
     print("  кнопка меню:", r.get("ok"), r.get("description", ""))
 
     r = tg(args.bot_token, "setMyShortDescription", {
-        "short_description": "Расписание ФЭМ СПбГТИ(ТУ) — красиво, на сегодня и на неделю",
+        "short_description": "Пары ФЭМ на сегодня и на неделю, календарь на семестр.",
     })
     print("  описание:", r.get("ok"))
     r = tg(args.bot_token, "setMyDescription", {"description":
-        "Пары на сегодня, неделя и весь семестр. Открой приложение кнопкой ниже "
-        "и один раз выбери группу — дальше всё само."})
+        "Расписание факультета экономики и менеджмента СПбГТИ(ТУ). "
+        "Пары на сегодня и на неделю, календарь на семестр, тёмная тема "
+        "и красивая картинка расписания, которой можно поделиться. "
+        "Открой приложение и выбери группу — дальше всё запомнится."})
     print("  about:", r.get("ok"))
 
     print("\nГотово.")

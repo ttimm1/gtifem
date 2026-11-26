@@ -1,29 +1,28 @@
 /**
  * ФЭМ · Расписание — Telegram-бот (Cloudflare Worker).
  *
- * Возможности:
- *   /start [группа]  — приветствие + кнопка Mini App, подписка на утреннюю сводку
- *   /today           — пары на сегодня текстом
- *   /week            — пары на неделю текстом
- *   /stop            — отключить сводку
+ *   /start [группа]  — приветствие, кнопка Mini App, подписка на утреннюю сводку
+ *   /today           — пары на сегодня
+ *   /week            — пары на неделю
+ *   /stop            — выключить сводку
  *   /help
- *   cron 2 раза в день — утренняя сводка (08:00 МСК) и вечерняя (20:00 МСК)
+ *   POST /api/subscribe   — подписка из приложения (initData)
+ *   POST /api/unsubscribe — отписка
+ *   POST /api/share       — прислать картинку расписания в чат
+ *   cron 2 раза в день    — утренняя сводка (08:00 МСК) и вечерняя (20:00 МСК)
  *
- * Переменные окружения (wrangler secret / vars):
- *   BOT_TOKEN       — токен от @BotFather
- *   WEBHOOK_SECRET  — произвольная строка, проверяется в заголовке Telegram
- *   WEBAPP_URL      — https://ttimm1.github.io/gtifem/
- *   DATA_URL        — https://ttimm1.github.io/gtifem/data
- *   USERS           — KV namespace
+ * Переменные окружения:
+ *   BOT_TOKEN, WEBHOOK_SECRET, WEBAPP_URL, DATA_URL, USERS (KV)
  */
 
 const WD_FULL = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
-const WD_SHORT = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+const WD_SHORT = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 const MONTH_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
 
 const escapeHtml = (s) =>
   String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
+const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
 const pad = (n) => String(n).padStart(2, '0');
 const iso = (d) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 const minOf = (t) => {
@@ -40,11 +39,26 @@ const plural = (n, f) => {
 };
 const lessonsWord = (n) => plural(n, ['пара', 'пары', 'пар']);
 
+function countdown(mins) {
+  if (mins < 1) return 'меньше минуты';
+  if (mins < 60) return `${mins} ${plural(mins, ['минута', 'минуты', 'минут'])}`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h} ч ${m} мин` : `${h} ч`;
+}
+
+const CORS_ORIGIN = 'https://ttimm1.github.io';
+
 /** Текущее время в Москве, но в UTC-полях (чтобы сравнивать с датами из JSON). */
 function mskNow() {
-  const d = new Date(Date.now() + 3 * 3600 * 1000);
-  return d;
+  return new Date(Date.now() + 3 * 3600 * 1000);
 }
+
+function dayHeadline(d) {
+  return `${WD_FULL[d.getUTCDay()]}, ${d.getUTCDate()} ${MONTH_GEN[d.getUTCMonth()]}`;
+}
+
+/* ---------- Telegram / данные ---------- */
 
 async function tg(env, method, payload) {
   const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`, {
@@ -61,8 +75,6 @@ async function fetchData(env, path) {
   if (!res.ok) throw new Error(`data ${res.status}`);
   return res.json();
 }
-
-const CORS_ORIGIN = 'https://ttimm1.github.io';
 
 function corsHeaders() {
   return {
@@ -119,6 +131,8 @@ async function checkInitData(initData, botToken) {
   }
 }
 
+/* ---------- API приложения ---------- */
+
 async function handleApi(request, env) {
   let body;
   try {
@@ -144,7 +158,7 @@ async function handleApi(request, env) {
     const cat = await fetchData(env, 'catalog.json');
     const g = (cat.groups || []).find((x) => x.id === group || x.name === group);
     if (g) name = g.name;
-  } catch (_) { /* offline — поверим */ }
+  } catch (_) { /* offline — поверим на слово */ }
   if (!name) return jsonOut({ ok: false, error: 'unknown_group' }, 404);
 
   const prev = env.USERS ? await env.USERS.get(`u:${user.id}`, 'json') : null;
@@ -157,49 +171,84 @@ async function handleApi(request, env) {
   return jsonOut({ ok: true, subscribed: true, group, name });
 }
 
-async function groupName(env, id) {
+async function handleShare(request, env) {
+  let body;
   try {
-    const cat = await fetchData(env, 'catalog.json');
-    const g = (cat.groups || []).find((x) => x.id === id);
-    return g ? g.name : id;
+    body = await request.json();
   } catch (_) {
-    return id;
+    return jsonOut({ ok: false, error: 'bad_json' }, 400);
   }
+  const user = await checkInitData(body.initData, env.BOT_TOKEN);
+  if (!user) return jsonOut({ ok: false, error: 'bad_init' }, 401);
+
+  const b64 = String(body.image || '').replace(/^data:image\/\w+;base64,/, '');
+  if (!b64) return jsonOut({ ok: false, error: 'no_image' }, 400);
+  if (b64.length > 9_000_000) return jsonOut({ ok: false, error: 'too_big' }, 413);
+
+  let bytes;
+  try {
+    bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  } catch (_) {
+    return jsonOut({ ok: false, error: 'bad_image' }, 400);
+  }
+
+  const mime = (/^data:(image\/[a-z+]+);base64/i.exec(String(body.image || '')) || [])[1] || 'image/jpeg';
+  const ext = mime === 'image/png' ? 'png' : 'jpg';
+
+  const form = new FormData();
+  form.append('chat_id', String(user.id));
+  form.append('caption', String(body.caption || '').slice(0, 900));
+  form.append('parse_mode', 'HTML');
+  form.append('photo', new Blob([bytes], { type: mime }), `schedule.${ext}`);
+
+  const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendPhoto`, {
+    method: 'POST',
+    body: form,
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  return jsonOut({ ok: !!data.ok, error: data.ok ? undefined : (data.description || 'send_failed') });
 }
 
-function dayText(day, date, opts = {}) {
+/* ---------- тексты расписания ---------- */
+
+function dayText(day) {
   if (!day || !day.lessons?.length) return '';
-  const list = day.lessons
+  return day.lessons
     .map((l) => {
       const meta = [l.room ? `ауд. ${l.room}` : '', l.teacher].filter(Boolean).map(escapeHtml).join(' · ');
-      return `<b>${escapeHtml(l.start)}</b>–${escapeHtml(l.end)}  ${escapeHtml(l.subject)}` + (meta ? `\n     <i>${meta}</i>` : '');
+      return `<b>${escapeHtml(l.start)}</b>–${escapeHtml(l.end)}  ${escapeHtml(l.subject)}` +
+        (meta ? `\n     <i>${meta}</i>` : '');
     })
     .join('\n');
-  return list;
 }
 
 function buildToday(schedule, now) {
   const key = iso(now);
   const nowMin = now.getUTCHours() * 60 + now.getUTCMinutes();
-  let day = (schedule.days || []).find((d) => d.date === key);
-  let headerLabel = `${WD_FULL[new Date(key + 'T00:00:00Z').getUTCDay()]}, ${now.getUTCDate()} ${MONTH_GEN[now.getUTCMonth()]}`;
+  const name = schedule.name || schedule.group;
+  const all = schedule.days || [];
+  const day = all.find((d) => d.date === key);
 
   if (!day) {
-    const next = (schedule.days || []).find((d) => d.date > key);
-    if (!next) return `🗓 <b>Сегодня пар нет</b>\n${escapeHtml(headerLabel)}\n\nРасписание на этот день не опубликовано.`;
-    day = next;
-    const d = new Date(next.date + 'T00:00:00Z');
-    headerLabel = `${WD_FULL[d.getUTCDay()]}, ${d.getUTCDate()} ${MONTH_GEN[d.getUTCMonth()]}`;
-    return `☕️ <b>Сегодня пар нет</b>\n\nБлижайшие занятия — <b>${escapeHtml(headerLabel)}</b>:\n\n${dayText(day)}`;
+    const next = all.find((d) => d.date > key);
+    if (!next) return '🗓 <b>Сегодня пар нет</b>\n\nНа этот день расписание ещё не выложили.';
+    const nd = new Date(next.date + 'T00:00:00Z');
+    return `🌿 <b>Сегодня пар нет</b>\n\nБлижайшие занятия — ${escapeHtml(cap(dayHeadline(nd)))}:\n\n${dayText(next)}`;
   }
 
-  const first = day.lessons[0];
-  const last = day.lessons[day.lessons.length - 1];
-  let prefix = '';
-  if (nowMin < minOf(first.start)) prefix = `До первой пары ${minOf(first.start) - nowMin} мин.\n\n`;
-  else if (nowMin > minOf(last.end)) prefix = 'Занятия закончились. Хорошего вечера!\n\n';
+  const lessons = day.lessons;
+  const first = lessons[0];
+  const last = lessons[lessons.length - 1];
+  const current = lessons.find((l) => nowMin >= minOf(l.start) && nowMin < minOf(l.end));
 
-  return `🗓 <b>${escapeHtml(headerLabel)}</b>\nГруппа <b>${escapeHtml(schedule.name || schedule.group)}</b> · ${day.lessons.length} ${lessonsWord(day.lessons.length)}\n\n${prefix}${dayText(day)}`;
+  let note = '';
+  if (current) note = `Сейчас идёт «${escapeHtml(current.subject)}» до ${escapeHtml(current.end)}.\n\n`;
+  else if (nowMin < minOf(first.start)) note = `До первой пары ${countdown(minOf(first.start) - nowMin)}.\n\n`;
+  else if (nowMin >= minOf(last.end)) note = 'На сегодня всё. Хорошего вечера.\n\n';
+
+  return `🗓 <b>${escapeHtml(cap(dayHeadline(new Date(key + 'T00:00:00Z'))))}</b>\n` +
+    `Группа <b>${escapeHtml(name)}</b> · ${lessons.length} ${lessonsWord(lessons.length)}\n\n` +
+    note + dayText(day);
 }
 
 function buildWeek(schedule, now) {
@@ -207,33 +256,40 @@ function buildWeek(schedule, now) {
   const base = new Date(key + 'T00:00:00Z');
   const monday = new Date(base);
   monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
+  const name = schedule.name || schedule.group;
 
   const parts = [];
+  let total = 0;
   for (let i = 0; i < 7; i++) {
     const d = new Date(monday);
     d.setUTCDate(d.getUTCDate() + i);
-    const dk = iso(d);
-    const day = (schedule.days || []).find((x) => x.date === dk);
-    const label = `${WD_SHORT[d.getUTCDay()]} ${d.getUTCDate()} ${MONTH_GEN[d.getUTCMonth()]}`;
+    const day = (schedule.days || []).find((x) => x.date === iso(d));
+    const label = `${WD_SHORT[d.getUTCDay()]} ${d.getUTCDate()}`;
     if (!day || !day.lessons.length) {
       parts.push(`<b>${escapeHtml(label)}</b> — свободно`);
-    } else {
-      const lines = day.lessons.map((l) => `${escapeHtml(l.start)} ${escapeHtml(l.subject)}${l.room ? ` · ауд. ${escapeHtml(l.room)}` : ''}`);
-      parts.push(`<b>${escapeHtml(label)}</b>\n${lines.join('\n')}`);
+      continue;
     }
+    total += day.lessons.length;
+    const lines = day.lessons.map((l) =>
+      `${escapeHtml(l.start)} ${escapeHtml(l.subject)}${l.room ? ` · ${escapeHtml(l.room)}` : ''}`
+    );
+    parts.push(`<b>${escapeHtml(label)}</b>\n${lines.join('\n')}`);
   }
+
   const sun = new Date(monday);
   sun.setUTCDate(sun.getUTCDate() + 6);
-  const title = `${monday.getUTCDate()}–${sun.getUTCDate()} ${MONTH_GEN[sun.getUTCMonth()]}`;
-  return `📅 <b>Неделя ${escapeHtml(title)}</b>\nГруппа <b>${escapeHtml(schedule.name || schedule.group)}</b>\n\n${parts.join('\n\n')}`;
+  const title = monday.getUTCMonth() === sun.getUTCMonth()
+    ? `${monday.getUTCDate()}–${sun.getUTCDate()} ${MONTH_GEN[sun.getUTCMonth()]}`
+    : `${monday.getUTCDate()} ${MONTH_GEN[monday.getUTCMonth()].slice(0, 3)} – ${sun.getUTCDate()} ${MONTH_GEN[sun.getUTCMonth()].slice(0, 3)}`;
+
+  return `📅 <b>Неделя ${escapeHtml(title)}</b>\n` +
+    `Группа <b>${escapeHtml(name)}</b> · ${total} ${lessonsWord(total)}\n\n` +
+    parts.join('\n\n');
 }
 
-function keyboard(env, extra = []) {
+function keyboard(env) {
   return {
-    inline_keyboard: [
-      ...extra,
-      [{ text: '📱 Открыть расписание', web_app: { url: env.WEBAPP_URL } }],
-    ],
+    inline_keyboard: [[{ text: 'Открыть расписание', web_app: { url: env.WEBAPP_URL } }]],
   };
 }
 
@@ -246,6 +302,8 @@ async function saveUser(env, chatId, groupId, enabled = true) {
     JSON.stringify({ group: groupId || prev?.group || '', enabled, added: prev?.added || Date.now() })
   );
 }
+
+/* ---------- апдейты ---------- */
 
 async function handleUpdate(env, update) {
   const msg = update.message || update.edited_message;
@@ -268,23 +326,23 @@ async function handleUpdate(env, update) {
         const cat = await fetchData(env, 'catalog.json');
         const g = (cat.groups || []).find((x) => x.id === arg || x.name === arg);
         if (g) name = g.name;
-      } catch (_) { /* offline — поверим пользователю */ }
+      } catch (_) { /* offline — поверим на слово */ }
+
       if (!name) {
         await tg(env, 'sendMessage', {
           chat_id: chatId,
-          text: 'Не нашёл такую группу. Открой приложение и выбери её в списке — тогда я всё запомню.',
+          text: 'Такой группы нет в списке. Открой приложение и выбери свою — тогда запомню.',
           reply_markup: keyboard(env),
         });
         return;
       }
+
       await saveUser(env, chatId, arg, true);
       await tg(env, 'sendMessage', {
         chat_id: chatId,
         text:
-          `Готово! Группа <b>${escapeHtml(name)}</b> сохранена.\n\n` +
-          `Каждое утро в 8:00 буду присылать расписание на день. ` +
-          `Отключить — /stop.\n\n` +
-          `А красивое расписание с календарём — по кнопке ниже.`,
+          `Запомнил: группа <b>${escapeHtml(name)}</b>.\n\n` +
+          'Каждое утро в 8:00 пришлю пары на день. Не нужно — /stop.',
         parse_mode: 'HTML',
         reply_markup: keyboard(env),
       });
@@ -294,10 +352,9 @@ async function handleUpdate(env, update) {
     await tg(env, 'sendMessage', {
       chat_id: chatId,
       text:
-        `<b>ФЭМ · Расписание</b>\n\n` +
-        `Пары на сегодня, неделя и весь семестр — в одном приложении.\n\n` +
-        `Открой его кнопкой ниже и один раз выбери группу. ` +
-        `Хочешь получать расписание в 8:00 — нажми «Напоминания» в настройках приложения.`,
+        '<b>ФЭМ · Расписание</b>\n\n' +
+        'Пары на сегодня и на неделю, календарь на семестр и красивая картинка, которой можно поделиться.\n\n' +
+        'Открой приложение и выбери группу — дальше всё запомнится.',
       parse_mode: 'HTML',
       reply_markup: keyboard(env),
     });
@@ -306,7 +363,10 @@ async function handleUpdate(env, update) {
 
   if (cmd === '/stop') {
     if (env.USERS) await env.USERS.delete(`u:${chatId}`);
-    await tg(env, 'sendMessage', { chat_id: chatId, text: 'Ок, сводку больше не присылаю. Вернуть — /start.' });
+    await tg(env, 'sendMessage', {
+      chat_id: chatId,
+      text: 'Хорошо, утреннюю сводку выключил. Вернуть — /start.',
+    });
     return;
   }
 
@@ -314,11 +374,12 @@ async function handleUpdate(env, update) {
     await tg(env, 'sendMessage', {
       chat_id: chatId,
       text:
-        `<b>Команды</b>\n` +
-        `/today — пары на сегодня\n` +
-        `/week — пары на неделю\n` +
-        `/stop — отключить утреннюю сводку\n` +
-        `/start — открыть приложение`,
+        '<b>Что умеет бот</b>\n\n' +
+        '/today — пары на сегодня\n' +
+        '/week — пары на неделю\n' +
+        '/stop — выключить утреннюю сводку\n' +
+        '/start — открыть приложение\n\n' +
+        'В приложении: календарь на семестр, тёмная тема и картинка расписания для друзей.',
       parse_mode: 'HTML',
       reply_markup: keyboard(env),
     });
@@ -329,7 +390,7 @@ async function handleUpdate(env, update) {
     if (!groupId) {
       await tg(env, 'sendMessage', {
         chat_id: chatId,
-        text: 'Сначала выбери группу в приложении — и нажми «Напоминания», чтобы я её запомнил.',
+        text: 'Сначала выбери группу в приложении — там же включаются напоминания.',
         reply_markup: keyboard(env),
       });
       return;
@@ -344,7 +405,10 @@ async function handleUpdate(env, update) {
         reply_markup: keyboard(env),
       });
     } catch (err) {
-      await tg(env, 'sendMessage', { chat_id: chatId, text: 'Не получилось загрузить расписание, попробуй позже.' });
+      await tg(env, 'sendMessage', {
+        chat_id: chatId,
+        text: 'Сайт с расписанием не отвечает. Попробуй через пару минут.',
+      });
     }
     return;
   }
@@ -366,18 +430,21 @@ async function digest(env, evening) {
         sched = await fetchData(env, `schedule/${user.group.replace(/,/g, '-')}.json`);
         cache.set(user.group, sched);
       }
+
       let body;
       if (evening) {
         const tomorrow = new Date(now);
         tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-        const key2 = iso(tomorrow);
-        const day = (sched.days || []).find((d) => d.date === key2);
+        const day = (sched.days || []).find((d) => d.date === iso(tomorrow));
         body = day
-          ? `🌙 <b>Завтра</b>, ${WD_FULL[tomorrow.getUTCDay()]}, ${tomorrow.getUTCDate()} ${MONTH_GEN[tomorrow.getUTCMonth()]}\n\n${dayText(day)}`
-          : `🌙 Завтра пар нет — можно выспаться.`;
+          ? `🌙 <b>Завтра, ${escapeHtml(dayHeadline(tomorrow))}</b>\n` +
+            `Группа <b>${escapeHtml(sched.name || sched.group)}</b> · ${day.lessons.length} ${lessonsWord(day.lessons.length)}\n\n` +
+            dayText(day)
+          : '🌙 Завтра пар нет — выспись как следует.';
       } else {
-        body = buildToday(sched, now);
+        body = `☀️ <b>Доброе утро</b>\n\n${buildToday(sched, now)}`;
       }
+
       await tg(env, 'sendMessage', {
         chat_id: Number(chatId),
         text: body.slice(0, 3900),
@@ -407,6 +474,11 @@ export default {
     if (url.pathname === '/api/subscribe' || url.pathname === '/api/unsubscribe') {
       if (request.method !== 'POST') return jsonOut({ ok: false }, 405);
       return handleApi(request, env);
+    }
+
+    if (url.pathname === '/api/share') {
+      if (request.method !== 'POST') return jsonOut({ ok: false }, 405);
+      return handleShare(request, env);
     }
 
     if (url.pathname === '/telegram' && request.method === 'POST') {
