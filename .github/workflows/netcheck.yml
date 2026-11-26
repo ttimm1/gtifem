@@ -1,0 +1,9 @@
+name: Netcheck
+on: workflow_dispatch
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Worker
+        run: |
+          curl -sS -m 25 -w "\nHTTP %{http_code}\n" https://fem-schedule-bot.timur-fem.workers.dev/ || true

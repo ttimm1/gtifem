@@ -159,19 +159,29 @@ async function handleUpdate(env, update) {
   const text = msg.text.trim();
   const [cmdRaw, ...rest] = text.split(/\s+/);
   const cmd = cmdRaw.split('@')[0].toLowerCase();
-  const arg = rest.join(' ').trim();
+  const rawArg = rest.join(' ').trim();
+  // В start-параметре Telegram запятая запрещена — приложение шлёт дефис.
+  const arg = rawArg.replace(/-/g, ',');
 
   const user = env.USERS ? await env.USERS.get(`u:${chatId}`, 'json') : null;
   const groupId = arg || user?.group || '';
 
   if (cmd === '/start') {
     if (arg) {
-      let name = arg;
+      let name = '';
       try {
         const cat = await fetchData(env, 'catalog.json');
-        const g = (cat.groups || []).find((x) => x.id === arg);
+        const g = (cat.groups || []).find((x) => x.id === arg || x.name === arg);
         if (g) name = g.name;
-      } catch (_) { /* offline */ }
+      } catch (_) { /* offline — поверим пользователю */ }
+      if (!name) {
+        await tg(env, 'sendMessage', {
+          chat_id: chatId,
+          text: 'Не нашёл такую группу. Открой приложение и выбери её в списке — тогда я всё запомню.',
+          reply_markup: keyboard(env),
+        });
+        return;
+      }
       await saveUser(env, chatId, arg, true);
       await tg(env, 'sendMessage', {
         chat_id: chatId,

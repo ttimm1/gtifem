@@ -647,7 +647,8 @@
       toast('Бот пока не подключён');
       return;
     }
-    const start = state.groupId ? `?start=${encodeURIComponent(state.groupId)}` : '';
+    // Telegram разрешает в start-параметре только [A-Za-z0-9_-], запятую заменяем на дефис.
+    const start = state.groupId ? `?start=${encodeURIComponent(state.groupId.replace(/,/g, '-'))}` : '';
     const url = `https://t.me/${CONFIG.bot}${start}`;
     try {
       if (tg && tg.openTelegramLink) tg.openTelegramLink(url);
@@ -789,7 +790,7 @@
 
     let gid = localStorage.getItem(LS.group) || null;
     const startParam = tg?.initDataUnsafe?.start_param || '';
-    const deepGroup = startParam && /^[0-9]+([,][0-9]+)*$/.test(startParam) ? startParam : '';
+    const deepGroup = startParam && /^[0-9]+(-[0-9]+)*$/.test(startParam) ? startParam.replace(/-/g, ',') : '';
     if (params.get('group')) gid = params.get('group');
     else if (deepGroup) gid = deepGroup;
     try {
